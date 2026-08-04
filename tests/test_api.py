@@ -2,17 +2,29 @@ from __future__ import annotations
 
 import json
 import threading
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.main import ChatRequest, create_app
-from app.models import AnalysisKind, AnalysisParameters, AnalysisResult
-from app.nemotron import NemotronError
-from app.sessions import SessionStore
+
+if TYPE_CHECKING:
+    AnalysisEngine: TypeAlias = Any
+    AnalysisKind: TypeAlias = Any
+    AnalysisParameters: TypeAlias = Any
+    AnalysisResult: TypeAlias = Any
+    SessionStore: TypeAlias = Any
+    NemotronError: Any
+else:
+    from app.chemistry import AnalysisEngine
+    from app.models import AnalysisKind, AnalysisParameters, AnalysisResult
+    from app.nemotron import NemotronError
+    from app.sessions import SessionStore
 
 
 ALLOWED_PROMPTS = {"fingerprints", "similarity", "clusters", "conformers"}
@@ -64,7 +76,7 @@ def _artifact(
     }
 
 
-class FakeEngine:
+class FakeEngine(AnalysisEngine):
     def __init__(
         self, *, fail: Exception | None = None, gate: threading.Barrier | None = None
     ) -> None:
@@ -72,14 +84,26 @@ class FakeEngine:
         self.gate = gate
         self.calls: list[tuple[AnalysisKind, AnalysisParameters]] = []
 
-    def run(self, kind: AnalysisKind, params: AnalysisParameters) -> AnalysisResult:
-        self.calls.append((kind, params))
+    def run(
+        self,
+        kind: AnalysisKind | str,
+        params: Mapping[str, Any] | AnalysisParameters | None,
+    ) -> AnalysisResult:
+        analysis_kind = AnalysisKind(kind)
+        analysis_params = (
+            AnalysisParameters.model_validate(params or {})
+            if params is None or isinstance(params, Mapping)
+            else params
+        )
+        self.calls.append((analysis_kind, analysis_params))
         if self.gate is not None:
             self.gate.wait(timeout=2)
         if self.fail is not None:
             raise self.fail
         return AnalysisResult(
-            kind=kind, summary={"kind": kind.value}, artifact=_artifact(kind)
+            kind=analysis_kind,
+            summary={"kind": analysis_kind.value},
+            artifact=_artifact(analysis_kind),
         )
 
 
@@ -132,7 +156,7 @@ class Clock:
 
 
 def _client(
-    engines: list[FakeEngine],
+    engines: Sequence[FakeEngine],
     responses: list[object | Exception],
     *,
     store: SessionStore | None = None,
@@ -206,7 +230,10 @@ def test_failures_preserve_previous_visualization(failure_stage: str) -> None:
     else:
         original = engine.run
 
-        def invalid(kind: AnalysisKind, params: AnalysisParameters) -> AnalysisResult:
+        def invalid(
+            kind: AnalysisKind | str,
+            params: Mapping[str, Any] | AnalysisParameters | None,
+        ) -> AnalysisResult:
             result = original(kind, params)
             result.artifact = {"matrix": [[float("nan")]], "molecule_ids": ["M1"]}
             return result
@@ -290,6 +317,30 @@ def test_chat_message_is_trimmed() -> None:
     assert ChatRequest.model_validate({"message": "  hello  "}).message == "hello"
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"prompt_id": "similarity", "message": "also"},
+        {"extra": 1},
+        {"message": "   "},
+        {"message": "x" * 2001},
+        {"prompt_id": "invalid"},
+    ],
+)
+def test_malformed_chat_body_returns_safe_capability_payload(
+    payload: dict[str, Any],
+) -> None:
+    client, _, _ = _client([FakeEngine()], [])
+    _authenticate(client)
+
+    response = client.post("/api/chat", json=payload)
+
+    assert response.status_code == 422
+    assert set(response.json()["detail"]["allowed_prompt_ids"]) == ALLOWED_PROMPTS
+    assert SECRET not in response.text
+
+
 def test_missing_and_expired_session_are_401() -> None:
     clock = Clock()
     store = SessionStore(lambda: FakeEngine(), clock=clock, idle_seconds=10)
@@ -351,8 +402,12 @@ def test_health_is_cached_injected_and_secret_safe() -> None:
     assert first.status_code == second.status_code == 200
     assert calls == 1
     assert first.json() == {
+        "process": {"ready": True},
+        "dependencies": {
+            "ready": True,
+            "checks": {"cuda": True, "pytorch": True, "nvmolkit": True},
+        },
         "ready": True,
-        "checks": {"cuda": True, "pytorch": True, "nvmolkit": True},
     }
     assert SECRET not in first.text
 
@@ -369,6 +424,8 @@ def test_health_is_cached_injected_and_secret_safe() -> None:
     response = unready.get("/api/health")
     assert response.status_code == 503
     assert response.json()["ready"] is False
+    assert response.json()["process"] == {"ready": True}
+    assert response.json()["dependencies"]["ready"] is False
     assert SECRET not in response.text
 
 
@@ -391,7 +448,11 @@ def test_same_session_chats_serialize_and_different_sessions_overlap() -> None:
     lock = threading.Lock()
 
     class TrackingEngine(FakeEngine):
-        def run(self, kind: AnalysisKind, params: AnalysisParameters) -> AnalysisResult:
+        def run(
+            self,
+            kind: AnalysisKind | str,
+            params: Mapping[str, Any] | AnalysisParameters | None,
+        ) -> AnalysisResult:
             nonlocal active, maximum
             with lock:
                 active += 1
@@ -438,7 +499,7 @@ def test_key_validation_is_bounded_without_client_calls() -> None:
 def test_app_exposes_only_required_api_routes() -> None:
     client, _, _ = _client([], [])
 
-    paths = {route.path for route in client.app.routes}
+    paths = {cast(Any, route).path for route in cast(FastAPI, client.app).routes}
     assert {path for path in paths if path.startswith("/api/")} == {
         "/api/session/key",
         "/api/session",

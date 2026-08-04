@@ -9,25 +9,41 @@ from collections.abc import Callable, Mapping
 from concurrent.futures import Executor, ThreadPoolExecutor
 from functools import partial
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias
 
-from fastapi import Cookie, FastAPI, HTTPException, Response, status
+from fastapi import Cookie, FastAPI, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
 
-from .chemistry import AnalysisEngine, NvMolKitRuntime
-from .config import SETTINGS
-from .models import AnalysisKind, AnalysisParameters, AnalysisResult
-from .nemotron import NemotronError, interpret_result, select_analysis
-from .sessions import SessionStore
-from .visualizations import (
-    build_cluster_chart,
-    build_conformer_bundle,
-    build_fingerprint_histogram,
-    build_similarity_heatmap,
-)
+if TYPE_CHECKING:
+    AnalysisEngine: TypeAlias = Any
+    AnalysisKind: TypeAlias = Any
+    AnalysisParameters: TypeAlias = Any
+    AnalysisResult: TypeAlias = Any
+    SessionStore: TypeAlias = Any
+    NvMolKitRuntime: Any
+    SETTINGS: Any
+    NemotronError: Any
+    interpret_result: Any
+    select_analysis: Any
+    build_cluster_chart: Any
+    build_conformer_bundle: Any
+    build_fingerprint_histogram: Any
+    build_similarity_heatmap: Any
+else:
+    from .chemistry import AnalysisEngine, NvMolKitRuntime
+    from .config import SETTINGS
+    from .models import AnalysisKind, AnalysisParameters, AnalysisResult
+    from .nemotron import NemotronError, interpret_result, select_analysis
+    from .sessions import SessionStore
+    from .visualizations import (
+        build_cluster_chart,
+        build_conformer_bundle,
+        build_fingerprint_histogram,
+        build_similarity_heatmap,
+    )
 
 
 PromptId = Literal["fingerprints", "similarity", "clusters", "conformers"]
@@ -86,7 +102,7 @@ def _production_nemotron_client(api_key: str) -> object:
 def _production_readiness() -> dict[str, bool]:
     checks = {"cuda": False, "pytorch": False, "nvmolkit": False}
     try:
-        import torch  # type: ignore[import-not-found]
+        import torch  # type: ignore
 
         checks["pytorch"] = True
         checks["cuda"] = bool(torch.cuda.is_available())
@@ -101,13 +117,17 @@ def _production_readiness() -> dict[str, bool]:
     return checks
 
 
+def _safe_capability_detail() -> dict[str, Any]:
+    return {
+        "message": "Request must select one supported molecular analysis.",
+        "allowed_prompt_ids": list(_ALLOWED_PROMPT_IDS),
+    }
+
+
 def _safe_capability_error() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        detail={
-            "message": "Request must select one supported molecular analysis.",
-            "allowed_prompt_ids": list(_ALLOWED_PROMPT_IDS),
-        },
+        detail=_safe_capability_detail(),
     )
 
 
@@ -289,9 +309,13 @@ def create_app(
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(
-        _request: object, _error: RequestValidationError
+        request: Request, _error: RequestValidationError
     ) -> JSONResponse:
         # FastAPI's default includes rejected input values, which may be a credential.
+        if request.url.path == "/api/chat":
+            return JSONResponse(
+                status_code=422, content={"detail": _safe_capability_detail()}
+            )
         return JSONResponse(status_code=422, content={"detail": "Invalid request."})
 
     @app.post("/api/session/key")
@@ -350,10 +374,19 @@ def create_app(
     async def health() -> JSONResponse:
         loop = asyncio.get_running_loop()
         checks = await loop.run_in_executor(get_executor(), cached_readiness)
-        ready = all(checks.values())
+        dependencies_ready = all(checks.values())
+        process_ready = True
+        ready = process_ready and dependencies_ready
         return JSONResponse(
             status_code=200 if ready else 503,
-            content={"ready": ready, "checks": checks},
+            content={
+                "process": {"ready": process_ready},
+                "dependencies": {
+                    "ready": dependencies_ready,
+                    "checks": checks,
+                },
+                "ready": ready,
+            },
         )
 
     def close_executor() -> None:
