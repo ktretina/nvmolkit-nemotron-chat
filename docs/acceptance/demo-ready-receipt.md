@@ -42,7 +42,7 @@ Tool identities recorded during the gate: CPython `3.12.12`, Node.js `v25.6.1`, 
 
 ## Source-project isolation
 
-The source notebook repository was inspected read-only at `/Users/ktretina/Desktop/BioNeMo Platform Meta Skill/projects/nvmolkit-brev-notebook`.
+A separate local checkout of [`ktretina/nvmolkit-brev-notebook`](https://github.com/ktretina/nvmolkit-brev-notebook) was inspected read-only.
 
 - Current local source HEAD: `c3f7a822720e10ed93269bfe6209386911762f39`.
 - Accepted data provenance commit: `dd27240e67dfe906412258dd6fafd2262eebd26e`.
