@@ -7,7 +7,7 @@ dependencies = [
     "openai==1.97.1",
     "pandas==2.3.1",
     "pydantic==2.11.7",
-    "rdkit==2025.3.3",
+    "rdkit==2026.3.1",
     "uvicorn[standard]==0.35.0",
 ]
 

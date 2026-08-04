@@ -30,9 +30,8 @@ COPY backend/ /tmp/backend/
 RUN python3.12 -m venv "$VIRTUAL_ENV" \
     && python -m pip install --no-cache-dir --upgrade pip \
     && python -m pip install --no-cache-dir \
-        --index-url https://download.pytorch.org/whl/cu128 \
+        --extra-index-url https://download.pytorch.org/whl/cu128 \
         torch==2.7.1+cu128 \
-    && python -m pip install --no-cache-dir \
         nvmolkit==0.5.0 \
         /tmp/backend \
     && rm -rf /tmp/backend
