@@ -56,6 +56,6 @@ The image build is for Linux x86-64 target-GPU hosts only. ARM64 Macs are unsupp
 docker build -f deployment/Dockerfile -t nvmolkit-nemotron-chat:local .
 ```
 
-The Docker build, container-history scan, GPU run, hosted Nemotron call, Secure Link, and live browser workflow have **not yet been run** in this implementation task. The base images therefore remain human-readable tags rather than falsely claimed digest pins. See `deployment/launchable-fields.md` for the pending Brev Console values and `docs/superpowers/specs/2026-08-04-nvmolkit-nemotron-chat-design.md` for the approved completion boundary.
+The Docker build, container-history scan, GPU run, hosted Nemotron call, Secure Link, and live browser workflow have **not yet been run**. The base images therefore remain human-readable tags rather than falsely claimed digest pins. See [`docs/acceptance/demo-ready-receipt.md`](docs/acceptance/demo-ready-receipt.md) for the latest local evidence and unresolved gates, `deployment/launchable-fields.md` for the pending Brev Console values, and `docs/superpowers/specs/2026-08-04-nvmolkit-nemotron-chat-design.md` for the approved completion boundary.
 
-Passing local backend/frontend tests or producing a static frontend build proves only those local gates. It does not qualify the CUDA image, scientific outputs on the target GPU, hosted service, public repository, Launchable, or live demo. Those remain Task 8 acceptance work.
+Passing local backend/frontend tests or producing a static frontend build proves only those local gates. It does not qualify the CUDA image, scientific outputs on the target GPU, hosted service, public repository, Launchable, or live demo. Those acceptance gates remain pending.
