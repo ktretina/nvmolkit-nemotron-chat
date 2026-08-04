@@ -244,6 +244,8 @@ def test_builders_accept_named_task_2_components_without_artifact_wrappers() -> 
         "missing_atoms",
         "missing_bonds",
         "atoms_are_strings",
+        "atoms_as_tuple",
+        "bonds_as_tuple",
         "duplicate_atom_index",
         "noncontiguous_atom_index",
         "missing_element",
@@ -252,7 +254,6 @@ def test_builders_accept_named_task_2_components_without_artifact_wrappers() -> 
         "duplicate_bond",
         "zero_bond_order",
         "nonfinite_bond_order",
-        "two_atoms_without_bond",
     ],
 )
 def test_conformer_bundle_rejects_malformed_viewer_structures(mutation) -> None:
@@ -264,6 +265,10 @@ def test_conformer_bundle_rejects_malformed_viewer_structures(mutation) -> None:
         structure.pop("bonds")
     elif mutation == "atoms_are_strings":
         structure["atoms"] = ["C", "O"]
+    elif mutation == "atoms_as_tuple":
+        structure["atoms"] = tuple(structure["atoms"])
+    elif mutation == "bonds_as_tuple":
+        structure["bonds"] = tuple(structure["bonds"])
     elif mutation == "duplicate_atom_index":
         structure["atoms"][1]["index"] = 0
     elif mutation == "noncontiguous_atom_index":
@@ -280,9 +285,6 @@ def test_conformer_bundle_rejects_malformed_viewer_structures(mutation) -> None:
         structure["bonds"][0]["order"] = 0.0
     elif mutation == "nonfinite_bond_order":
         structure["bonds"][0]["order"] = np.inf
-    else:
-        structure["bonds"] = []
-
     with pytest.raises(ValueError):
         build_conformer_bundle(artifact)
 
@@ -297,6 +299,46 @@ def test_conformer_bundle_allows_one_atom_structure_without_bonds() -> None:
     bundle = build_conformer_bundle(artifact)
 
     assert bundle["viewer"]["structures"][0]["bonds"] == []
+
+
+def test_conformer_bundle_allows_disconnected_multi_atom_structure() -> None:
+    artifact = _conformer_artifact()
+    for structure in artifact["renderable_structures"]:
+        structure["bonds"] = []
+
+    bundle = build_conformer_bundle(artifact)
+
+    assert bundle["viewer"]["structures"][0]["bonds"] == []
+
+
+def test_conformer_bundle_rejects_nested_non_string_mapping_keys() -> None:
+    artifact = _conformer_artifact()
+    artifact["renderable_structures"][0]["metadata"] = {
+        "nested": {np.int64(1): "collision-risk"}
+    }
+
+    with pytest.raises(ValueError, match="string keys"):
+        build_conformer_bundle(artifact)
+
+
+def test_conformer_bundle_accepts_coordinate_ndarrays_and_roundtrips_json() -> None:
+    artifact = _conformer_artifact()
+    for structure in artifact["renderable_structures"]:
+        structure["coordinates"] = np.asarray(structure["coordinates"])
+
+    bundle = build_conformer_bundle(artifact)
+
+    assert bundle == json.loads(json.dumps(bundle, allow_nan=False))
+
+
+def test_conformer_bundle_rejects_nonfinite_coordinate_ndarray_cleanly() -> None:
+    artifact = _conformer_artifact()
+    artifact["renderable_structures"][0]["coordinates"] = np.asarray(
+        [[0.0, 0.0, 0.0], [np.nan, 0.0, 0.0]]
+    )
+
+    with pytest.raises(ValueError, match="non-finite"):
+        build_conformer_bundle(artifact)
 
 
 def _assert_exact_json_scalars(value) -> None:

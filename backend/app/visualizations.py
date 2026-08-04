@@ -349,6 +349,10 @@ def _normalize_conformer_record(record: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_structure(structure: Mapping[str, Any]) -> dict[str, Any]:
+    if not isinstance(_required(structure, "atoms"), list):
+        raise ValueError("atoms must be a list")
+    if not isinstance(_required(structure, "bonds"), list):
+        raise ValueError("bonds must be a list")
     normalized = _json_primitives(structure)
     molecule_id, conformer_id, conformer_index = _validated_identity(normalized)
     coordinates = _sequence(_required(normalized, "coordinates"), "coordinates")
@@ -398,8 +402,6 @@ def _normalize_atoms(value: Any) -> list[dict[str, Any]]:
 
 def _normalize_bonds(value: Any, atom_count: int) -> list[dict[str, Any]]:
     bonds = _mapping_sequence(value, "bonds")
-    if atom_count > 1 and not bonds:
-        raise ValueError("multi-atom structures require at least one bond")
     normalized: list[dict[str, Any]] = []
     endpoints_seen: set[tuple[int, int]] = set()
     for bond in bonds:
@@ -474,6 +476,7 @@ def _identity(mapping: Mapping[str, Any]) -> tuple[str, str, int]:
 
 def _validated_json(value: Any) -> Any:
     require_finite(value)
+    _require_string_keys(value)
     try:
         json.dumps(value, allow_nan=False)
     except (TypeError, ValueError) as error:
@@ -481,9 +484,25 @@ def _validated_json(value: Any) -> Any:
     return value
 
 
+def _require_string_keys(value: Any) -> None:
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            if type(key) is not str:
+                raise ValueError("JSON mappings require exact string keys")
+            _require_string_keys(item)
+    elif isinstance(value, list):
+        for item in value:
+            _require_string_keys(item)
+
+
 def _json_primitives(value: Any) -> Any:
     if isinstance(value, Mapping):
-        return {_json_primitives(key): _json_primitives(item) for key, item in value.items()}
+        normalized: dict[str, Any] = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError("JSON mappings require string keys")
+            normalized[str(key)] = _json_primitives(item)
+        return normalized
     if isinstance(value, (list, tuple)):
         return [_json_primitives(item) for item in value]
     if value is None or type(value) in {str, int, float, bool}:
@@ -494,9 +513,20 @@ def _json_primitives(value: Any) -> Any:
         return int(value)
     if isinstance(value, numbers.Real):
         return float(value)
+    tolist = getattr(value, "tolist", None)
+    if callable(tolist):
+        listed = tolist()
+        if listed is not value:
+            return _json_primitives(listed)
     item = getattr(value, "item", None)
     if callable(item):
-        scalar = item()
+        shape = getattr(value, "shape", ())
+        if shape not in (None, ()):
+            raise ValueError("array-like values must support list conversion")
+        try:
+            scalar = item()
+        except (TypeError, ValueError) as error:
+            raise ValueError("scalar-like value could not be normalized") from error
         if scalar is not value:
             return _json_primitives(scalar)
     return value
