@@ -44,18 +44,24 @@ def _conformer_artifact():
                 "molecule_id": "CHEMBL1",
                 "conformer_id": "CHEMBL1:conf-0",
                 "conformer_index": 0,
-                "atoms": [{"index": 0, "element": "C"}],
-                "bonds": [],
-                "coordinates": [[0.0, 0.0, 0.0]],
+                "atoms": [
+                    {"index": 0, "element": "C"},
+                    {"index": 1, "element": "O"},
+                ],
+                "bonds": [{"begin": 0, "end": 1, "order": 1.0}],
+                "coordinates": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
                 "relative_energy_kcal_mol": 0.0,
             },
             {
                 "molecule_id": "CHEMBL1",
                 "conformer_id": "CHEMBL1:conf-1",
                 "conformer_index": 1,
-                "atoms": [{"index": 0, "element": "C"}],
-                "bonds": [],
-                "coordinates": [[1.0, 2.0, 3.0]],
+                "atoms": [
+                    {"index": 0, "element": "C"},
+                    {"index": 1, "element": "O"},
+                ],
+                "bonds": [{"begin": 0, "end": 1, "order": 1.0}],
+                "coordinates": [[1.0, 2.0, 3.0], [2.0, 2.0, 3.0]],
                 "relative_energy_kcal_mol": 1.25,
             },
         ],
@@ -67,7 +73,7 @@ def test_cluster_chart_has_required_labels_and_hover_context() -> None:
         {"cluster_sizes": [3, 1], "representative_molecule_ids": ["CHEMBL1", "CHEMBL2"]}
     )
 
-    assert graph["kind"] == "plotly"
+    assert graph["kind"] == "clusters"
     assert _layout_titles(graph) == (
         "Molecular similarity cluster sizes",
         "Cluster ID",
@@ -84,6 +90,7 @@ def test_similarity_heatmap_has_axes_scale_and_aligned_id_hover() -> None:
     )
     trace = graph["data"][0]
 
+    assert graph["kind"] == "similarity"
     assert _layout_titles(graph) == (
         "Pairwise molecular similarity",
         "Molecule index — bundled ChEMBL set",
@@ -109,7 +116,7 @@ def test_similarity_heatmap_rejects_nonfinite_misaligned_or_out_of_range(artifac
         build_similarity_heatmap(artifact)
 
 
-def test_fingerprint_histogram_has_required_labels_and_aligned_context() -> None:
+def test_fingerprint_histogram_has_truthful_aggregate_hover() -> None:
     graph = build_fingerprint_histogram(
         {"molecule_ids": ["CHEMBL1", "CHEMBL2"], "active_bit_counts": [7, 11]}
     )
@@ -119,8 +126,12 @@ def test_fingerprint_histogram_has_required_labels_and_aligned_context() -> None
         "Active Morgan fingerprint bits per molecule",
         "Molecule count",
     )
-    assert graph["data"][0]["customdata"] == ["CHEMBL1", "CHEMBL2"]
-    assert "ChEMBL" in graph["data"][0]["hovertemplate"]
+    trace = graph["data"][0]
+    assert graph["kind"] == "fingerprint_density"
+    assert "customdata" not in trace
+    assert "%{x}" in trace["hovertemplate"]
+    assert "%{y}" in trace["hovertemplate"]
+    assert "molecule %{customdata}" not in trace["hovertemplate"].lower()
 
 
 @pytest.mark.parametrize(
@@ -144,8 +155,9 @@ def test_cluster_chart_rejects_mismatched_sizes_and_representatives() -> None:
 
 def test_conformer_bundle_has_energy_labels_viewer_flags_and_selectors() -> None:
     bundle = build_conformer_bundle(_conformer_artifact())
-    graph = bundle["energy_chart"]
+    graph = bundle["energy_plot"]
 
+    assert bundle["kind"] == "conformers"
     assert _layout_titles(graph) == (
         "Sampled conformer energies",
         "Conformer ID",
@@ -220,5 +232,112 @@ def test_builders_accept_named_task_2_components_without_artifact_wrappers() -> 
         structures=conformers["renderable_structures"],
     )
 
-    assert fingerprint["kind"] == similarity["kind"] == clusters["kind"] == "plotly"
-    assert bundle["kind"] == "conformer_bundle"
+    assert fingerprint["kind"] == "fingerprint_density"
+    assert similarity["kind"] == "similarity"
+    assert clusters["kind"] == "clusters"
+    assert bundle["kind"] == "conformers"
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_atoms",
+        "missing_bonds",
+        "atoms_are_strings",
+        "duplicate_atom_index",
+        "noncontiguous_atom_index",
+        "missing_element",
+        "out_of_range_bond",
+        "self_bond",
+        "duplicate_bond",
+        "zero_bond_order",
+        "nonfinite_bond_order",
+        "two_atoms_without_bond",
+    ],
+)
+def test_conformer_bundle_rejects_malformed_viewer_structures(mutation) -> None:
+    artifact = _conformer_artifact()
+    structure = artifact["renderable_structures"][0]
+    if mutation == "missing_atoms":
+        structure.pop("atoms")
+    elif mutation == "missing_bonds":
+        structure.pop("bonds")
+    elif mutation == "atoms_are_strings":
+        structure["atoms"] = ["C", "O"]
+    elif mutation == "duplicate_atom_index":
+        structure["atoms"][1]["index"] = 0
+    elif mutation == "noncontiguous_atom_index":
+        structure["atoms"][1]["index"] = 2
+    elif mutation == "missing_element":
+        structure["atoms"][0].pop("element")
+    elif mutation == "out_of_range_bond":
+        structure["bonds"][0]["end"] = 2
+    elif mutation == "self_bond":
+        structure["bonds"][0]["end"] = 0
+    elif mutation == "duplicate_bond":
+        structure["bonds"].append({"begin": 1, "end": 0, "order": 1.0})
+    elif mutation == "zero_bond_order":
+        structure["bonds"][0]["order"] = 0.0
+    elif mutation == "nonfinite_bond_order":
+        structure["bonds"][0]["order"] = np.inf
+    else:
+        structure["bonds"] = []
+
+    with pytest.raises(ValueError):
+        build_conformer_bundle(artifact)
+
+
+def test_conformer_bundle_allows_one_atom_structure_without_bonds() -> None:
+    artifact = _conformer_artifact()
+    for structure in artifact["renderable_structures"]:
+        structure["atoms"] = [{"index": 0, "element": "He"}]
+        structure["bonds"] = []
+        structure["coordinates"] = [[0.0, 0.0, 0.0]]
+
+    bundle = build_conformer_bundle(artifact)
+
+    assert bundle["viewer"]["structures"][0]["bonds"] == []
+
+
+def _assert_exact_json_scalars(value) -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            assert type(key) is str
+            _assert_exact_json_scalars(item)
+    elif isinstance(value, list):
+        for item in value:
+            _assert_exact_json_scalars(item)
+    else:
+        assert type(value) in {str, int, float, bool, type(None)}
+
+
+def test_returned_payloads_normalize_numpy_scalars_to_builtin_types() -> None:
+    fingerprint = build_fingerprint_histogram(
+        active_bits=[np.int64(4)], molecule_ids=[np.str_("CHEMBL1")]
+    )
+    similarity = build_similarity_heatmap(
+        matrix=[[np.float64(1.0)]], molecule_ids=[np.str_("CHEMBL1")]
+    )
+    clusters = build_cluster_chart(
+        sizes=[np.int64(1)], representative_molecule_ids=[np.str_("CHEMBL1")]
+    )
+    artifact = _conformer_artifact()
+    for record, structure in zip(
+        artifact["per_conformer_records"], artifact["renderable_structures"]
+    ):
+        record["molecule_id"] = np.str_(record["molecule_id"])
+        record["conformer_id"] = np.str_(record["conformer_id"])
+        record["conformer_index"] = np.int64(record["conformer_index"])
+        record["relative_energy_kcal_mol"] = np.float64(
+            record["relative_energy_kcal_mol"]
+        )
+        structure.update(record)
+        structure["atoms"][0]["index"] = np.int64(0)
+        structure["atoms"][0]["element"] = np.str_("C")
+        structure["bonds"][0]["order"] = np.float64(1.0)
+        structure["selected"] = np.bool_(True)
+    conformers = build_conformer_bundle(artifact)
+
+    for payload in (fingerprint, similarity, clusters, conformers):
+        _assert_exact_json_scalars(payload)
+        json.dumps(payload, allow_nan=False)

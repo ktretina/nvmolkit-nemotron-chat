@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import json
 import math
 import numbers
@@ -51,19 +50,19 @@ def build_fingerprint_histogram(
         raise ValueError("active-bit counts must be nonnegative")
 
     graph = _plotly_graph(
+        kind="fingerprint_density",
         title="Morgan fingerprint density",
         x_title="Active Morgan fingerprint bits per molecule",
         y_title="Molecule count",
         trace={
             "type": "histogram",
             "x": count_values,
-            "customdata": id_values,
             "hovertemplate": (
-                "ChEMBL molecule %{customdata}<br>Active Morgan bits: %{x}<extra></extra>"
+                "Active Morgan bits: %{x}<br>Molecule count: %{y}<extra></extra>"
             ),
         },
     )
-    return _json_isolated(graph)
+    return _validated_json(graph)
 
 
 def build_similarity_heatmap(
@@ -98,6 +97,7 @@ def build_similarity_heatmap(
         values.append(row_values)
 
     graph = _plotly_graph(
+        kind="similarity",
         title="Pairwise molecular similarity",
         x_title="Molecule index — bundled ChEMBL set",
         y_title="Molecule index — bundled ChEMBL set",
@@ -117,7 +117,7 @@ def build_similarity_heatmap(
             ),
         },
     )
-    return _json_isolated(graph)
+    return _validated_json(graph)
 
 
 def build_cluster_chart(
@@ -147,6 +147,7 @@ def build_cluster_chart(
         raise ValueError("cluster sizes must be positive")
 
     graph = _plotly_graph(
+        kind="clusters",
         title="Molecular similarity cluster sizes",
         x_title="Cluster ID",
         y_title="Molecule count",
@@ -161,7 +162,7 @@ def build_cluster_chart(
             ),
         },
     )
-    return _json_isolated(graph)
+    return _validated_json(graph)
 
 
 def build_conformer_bundle(
@@ -204,7 +205,8 @@ def build_conformer_bundle(
     conformer_ids = [item[1] for item in record_identities]
     molecule_ids = [item[0] for item in record_identities]
     energies = [record["relative_energy_kcal_mol"] for record in normalized_records]
-    energy_chart = _plotly_graph(
+    energy_plot = _plotly_graph(
+        kind="plotly",
         title="Sampled conformer energies",
         x_title="Conformer ID",
         y_title="Relative MMFF94 energy (kcal/mol)",
@@ -230,8 +232,8 @@ def build_conformer_bundle(
         for molecule_id in unique_molecule_ids
     }
     bundle = {
-        "kind": "conformer_bundle",
-        "energy_chart": energy_chart,
+        "kind": "conformers",
+        "energy_plot": energy_plot,
         "viewer": {
             "kind": "3dmol",
             "structures": normalized_structures,
@@ -251,14 +253,14 @@ def build_conformer_bundle(
             for molecule_id, conformer_id, conformer_index in record_identities
         ],
     }
-    return _json_isolated(bundle)
+    return _validated_json(bundle)
 
 
 def _plotly_graph(
-    *, title: str, x_title: str, y_title: str, trace: dict[str, Any]
+    *, kind: str, title: str, x_title: str, y_title: str, trace: dict[str, Any]
 ) -> dict[str, Any]:
     return {
-        "kind": "plotly",
+        "kind": kind,
         "data": [trace],
         "layout": {
             "title": {"text": title},
@@ -303,9 +305,10 @@ def _identifiers(value: Any, name: str) -> list[str]:
     identifiers = _sequence(value, name)
     if any(not isinstance(item, str) or not item.strip() for item in identifiers):
         raise ValueError(f"{name} must contain nonempty strings")
-    if len(set(identifiers)) != len(identifiers):
+    normalized = [str(item) for item in identifiers]
+    if len(set(normalized)) != len(normalized):
         raise ValueError(f"{name} must be unique")
-    return identifiers
+    return normalized
 
 
 def _numeric_vector(value: Any, name: str, *, integer: bool = False) -> list[Any]:
@@ -333,7 +336,7 @@ def _aligned_nonempty(first: Sequence[Any], second: Sequence[Any], name: str) ->
 
 
 def _normalize_conformer_record(record: Mapping[str, Any]) -> dict[str, Any]:
-    normalized = copy.deepcopy(dict(record))
+    normalized = _json_primitives(record)
     molecule_id, conformer_id, conformer_index = _validated_identity(normalized)
     energy = _numeric_field(normalized, "relative_energy_kcal_mol")
     normalized.update(
@@ -342,11 +345,11 @@ def _normalize_conformer_record(record: Mapping[str, Any]) -> dict[str, Any]:
         conformer_index=conformer_index,
         relative_energy_kcal_mol=energy,
     )
-    return _json_isolated(normalized)
+    return normalized
 
 
 def _normalize_structure(structure: Mapping[str, Any]) -> dict[str, Any]:
-    normalized = copy.deepcopy(dict(structure))
+    normalized = _json_primitives(structure)
     molecule_id, conformer_id, conformer_index = _validated_identity(normalized)
     coordinates = _sequence(_required(normalized, "coordinates"), "coordinates")
     if not coordinates:
@@ -356,20 +359,84 @@ def _normalize_structure(structure: Mapping[str, Any]) -> dict[str, Any]:
     ]
     if any(len(point) != 3 for point in normalized_coordinates):
         raise ValueError("each coordinate must contain exactly x, y, and z")
-    atoms = _sequence(_required(normalized, "atoms"), "atoms")
+    atoms = _normalize_atoms(_required(normalized, "atoms"))
     if len(atoms) != len(normalized_coordinates):
         raise ValueError("atom and coordinate counts must be aligned")
+    bonds = _normalize_bonds(_required(normalized, "bonds"), len(atoms))
     normalized.update(
         molecule_id=molecule_id,
         conformer_id=conformer_id,
         conformer_index=conformer_index,
+        atoms=atoms,
+        bonds=bonds,
         coordinates=normalized_coordinates,
     )
     if "relative_energy_kcal_mol" in normalized:
         normalized["relative_energy_kcal_mol"] = _numeric_field(
             normalized, "relative_energy_kcal_mol"
         )
-    return _json_isolated(normalized)
+    return normalized
+
+
+def _normalize_atoms(value: Any) -> list[dict[str, Any]]:
+    atoms = _mapping_sequence(value, "atoms")
+    if not atoms:
+        raise ValueError("atoms must not be empty")
+    normalized: list[dict[str, Any]] = []
+    for atom in atoms:
+        item = atom
+        index = _exact_nonnegative_integer(_required(item, "index"), "atom index")
+        element = _required(item, "element")
+        if not isinstance(element, str) or not element.strip():
+            raise ValueError("atom element must be a nonempty string")
+        item.update(index=index, element=str(element))
+        normalized.append(item)
+    if [atom["index"] for atom in normalized] != list(range(len(normalized))):
+        raise ValueError("atom indices must be unique, contiguous, and aligned")
+    return normalized
+
+
+def _normalize_bonds(value: Any, atom_count: int) -> list[dict[str, Any]]:
+    bonds = _mapping_sequence(value, "bonds")
+    if atom_count > 1 and not bonds:
+        raise ValueError("multi-atom structures require at least one bond")
+    normalized: list[dict[str, Any]] = []
+    endpoints_seen: set[tuple[int, int]] = set()
+    for bond in bonds:
+        item = bond
+        begin = _exact_nonnegative_integer(_required(item, "begin"), "bond begin")
+        end = _exact_nonnegative_integer(_required(item, "end"), "bond end")
+        if begin == end:
+            raise ValueError("bond endpoints must be distinct")
+        if begin >= atom_count or end >= atom_count:
+            raise ValueError("bond endpoints must reference atom indices")
+        endpoints = tuple(sorted((begin, end)))
+        if endpoints in endpoints_seen:
+            raise ValueError("duplicate bond endpoints are not allowed")
+        endpoints_seen.add(endpoints)
+        order = _positive_numeric(_required(item, "order"), "bond order")
+        item.update(begin=begin, end=end, order=order)
+        normalized.append(item)
+    return normalized
+
+
+def _exact_nonnegative_integer(value: Any, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, numbers.Integral):
+        raise ValueError(f"{name} must be an exact integer")
+    normalized = int(value)
+    if normalized < 0:
+        raise ValueError(f"{name} must be nonnegative")
+    return normalized
+
+
+def _positive_numeric(value: Any, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        raise ValueError(f"{name} must be numeric")
+    require_finite(value)
+    normalized = float(value)
+    if normalized <= 0.0:
+        raise ValueError(f"{name} must be positive")
+    return normalized
 
 
 def _validated_identity(mapping: Mapping[str, Any]) -> tuple[str, str, int]:
@@ -405,14 +472,13 @@ def _identity(mapping: Mapping[str, Any]) -> tuple[str, str, int]:
     )
 
 
-def _json_isolated(value: Any) -> Any:
-    isolated = _json_primitives(copy.deepcopy(value))
-    require_finite(isolated)
+def _validated_json(value: Any) -> Any:
+    require_finite(value)
     try:
-        json.dumps(isolated, allow_nan=False)
+        json.dumps(value, allow_nan=False)
     except (TypeError, ValueError) as error:
         raise ValueError("visualization payload must be JSON-safe") from error
-    return isolated
+    return value
 
 
 def _json_primitives(value: Any) -> Any:
@@ -420,10 +486,17 @@ def _json_primitives(value: Any) -> Any:
         return {_json_primitives(key): _json_primitives(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_primitives(item) for item in value]
-    if isinstance(value, bool) or value is None or isinstance(value, (str, int, float)):
+    if value is None or type(value) in {str, int, float, bool}:
         return value
+    if isinstance(value, str):
+        return str(value)
     if isinstance(value, numbers.Integral):
         return int(value)
     if isinstance(value, numbers.Real):
         return float(value)
+    item = getattr(value, "item", None)
+    if callable(item):
+        scalar = item()
+        if scalar is not value:
+            return _json_primitives(scalar)
     return value
