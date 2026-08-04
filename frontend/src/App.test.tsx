@@ -22,6 +22,13 @@ const graph = {
   interpretation_unavailable: false,
 } as const;
 
+const exactPrompts = [
+  "Show the Morgan fingerprint density across the bundled molecules.",
+  "Map structural similarity across the bundled dataset.",
+  "Cluster the molecules by structural similarity and show the cluster sizes.",
+  "Generate and compare optimized 3D conformers for representative molecules.",
+];
+
 function response(body: unknown, ok = true, status = 200): Response {
   return { ok, status, json: async () => body } as Response;
 }
@@ -69,7 +76,26 @@ it("submits the key only to the backend, clears it, and never uses browser stora
 it("renders all four suggested prompts after authentication", async () => {
   mockFetch(response({ authenticated: true, visualization: null }));
   render(<App />);
-  expect(await screen.findAllByTestId("suggested-prompt")).toHaveLength(4);
+  const prompts = await screen.findAllByTestId("suggested-prompt");
+  expect(prompts.map((prompt) => prompt.textContent)).toEqual(exactPrompts);
+});
+
+it("moves the guaranteed prompts into a compact menu once chat begins", async () => {
+  const fetchMock = mockFetch(
+    response({ authenticated: true, visualization: null }),
+    response({ visualization: graph }),
+    response({ visualization: graph }),
+  );
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: exactPrompts[1] }));
+
+  expect(screen.queryAllByTestId("suggested-prompt")).toHaveLength(0);
+  const menu = await screen.findByText(/validated analyses/i);
+  expect(menu.closest("details")).toBeInTheDocument();
+  fireEvent.click(menu);
+  fireEvent.click(screen.getByRole("button", { name: exactPrompts[2] }));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+  expect(JSON.parse(String((fetchMock.mock.calls[2][1] as RequestInit).body))).toEqual({ prompt_id: "clusters" });
 });
 
 it("sends a suggested prompt ID directly and a free-form message separately", async () => {
@@ -79,8 +105,10 @@ it("sends a suggested prompt ID directly and a free-form message separately", as
     response({ visualization: graph }),
   );
   render(<App />);
-  fireEvent.click(await screen.findByRole("button", { name: /map structural similarity/i }));
+  fireEvent.click(await screen.findByRole("button", { name: exactPrompts[1] }));
   await screen.findByText(/one self-match/i);
+  expect(screen.getByRole("heading", { name: "analyze_similarity_map" })).toBeInTheDocument();
+  expect(screen.getByText(`Result for: “${exactPrompts[1]}”`)).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText(/ask about the bundled molecules/i), {
     target: { value: "Show molecular groups" },
   });
@@ -98,12 +126,16 @@ it("keeps the latest figure visible when a later request fails", async () => {
     response({ detail: "Chemistry runtime is unavailable." }, false, 503),
   );
   render(<App />);
-  fireEvent.click(await screen.findByRole("button", { name: /map structural similarity/i }));
+  fireEvent.click(await screen.findByRole("button", { name: exactPrompts[1] }));
   expect(await screen.findByRole("img", { name: /pairwise molecular similarity/i })).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: /find molecular clusters/i }));
+  fireEvent.click(screen.getByText(/validated analyses/i));
+  fireEvent.click(screen.getByRole("button", { name: exactPrompts[2] }));
 
   expect(await screen.findByRole("alert")).toHaveTextContent(/chemistry runtime is unavailable/i);
   expect(screen.getByRole("img", { name: /pairwise molecular similarity/i })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "analyze_similarity_map" })).toBeInTheDocument();
+  expect(screen.getByText(/retained from the earlier successful request/i)).toHaveTextContent(exactPrompts[1]);
+  expect(screen.getByText(/latest request failed/i)).toHaveTextContent(exactPrompts[2]);
 });
 
 it("clears the ephemeral session on logout", async () => {

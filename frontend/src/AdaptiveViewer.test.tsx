@@ -109,12 +109,25 @@ it("shows 3D controls and keeps the labeled energy graph for conformers", () => 
   expect(screen.getByLabelText(/rendering style/i)).toHaveValue("stick");
   expect(screen.getByText("C")).toBeInTheDocument();
   expect(screen.getByText("O")).toBeInTheDocument();
+  const triad = screen.getByRole("img", { name: /xyz orientation triad/i });
+  expect(triad).toBeInTheDocument();
+  expect(screen.getByLabelText("X axis")).toBeInTheDocument();
+  expect(screen.getByLabelText("Y axis")).toBeInTheDocument();
+  expect(screen.getByLabelText("Z axis")).toBeInTheDocument();
   expect(plotly).toHaveBeenCalledWith(expect.objectContaining({
     layout: expect.objectContaining({
       xaxis: { title: { text: "Conformer ID" } },
       yaxis: { title: { text: "Relative MMFF94 energy (kcal/mol)" } },
     }),
   }));
+});
+
+it("omits the orientation triad when the validated payload disables it", () => {
+  render(<AdaptiveViewer visualization={{
+    ...conformers,
+    viewer: { ...conformers.viewer, xyz_triad: false },
+  }} />);
+  expect(screen.queryByRole("img", { name: /xyz orientation triad/i })).not.toBeInTheDocument();
 });
 
 it("replaces the 3D model when the conformer selection changes", () => {

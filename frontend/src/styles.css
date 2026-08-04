@@ -60,6 +60,11 @@ h1, h2, p { margin-top: 0; }
 .message.user { justify-self: end; background: #304900; }
 .message.assistant { background: #1a1e23; color: #d9dcdf; }
 
+.compact-prompt-menu { margin: 0 22px 8px; color: #bfc4ca; font-size: 0.78rem; }
+.compact-prompt-menu summary { width: fit-content; cursor: pointer; color: #9bc94d; }
+.compact-prompt-menu > div { display: flex; gap: 6px; overflow-x: auto; padding-top: 8px; }
+.compact-prompt-menu button { flex: 0 0 auto; max-width: 220px; overflow: hidden; padding: 7px 10px; border: 1px solid #32363c; border-radius: 7px; background: #171a1e; color: #d8dbde; font-size: 0.72rem; text-overflow: ellipsis; white-space: nowrap; }
+
 .request-status { min-height: 28px; padding: 4px 24px; color: #9bc94d; font-size: 0.82rem; }
 .error-message { color: #ff9a9a; }
 .pane-error { margin: 0; padding: 4px 24px 8px; }
@@ -82,7 +87,13 @@ h1, h2, p { margin-top: 0; }
 .boundary-note { margin: 0; padding: 4px 22px 14px; font-size: 0.72rem; }
 
 .viewer-pane { min-width: 0; min-height: 100vh; background: #090d13; }
+.viewer-header { min-height: 88px; padding: 14px 20px; border-bottom: 1px solid #242a32; }
+.viewer-header p { margin-bottom: 3px; color: #9299a2; font-size: 0.75rem; }
+.viewer-header h2 { margin-bottom: 5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1rem; }
+.viewer-header .retained-result-note { margin: 8px 0 0; color: #ffcc75; }
+.viewer-content { min-height: calc(100vh - 88px); }
 .viewer-empty { min-height: 100vh; display: grid; place-content: center; padding: 32px; text-align: center; }
+.viewer-content .viewer-empty, .viewer-content .conformer-pane { min-height: calc(100vh - 88px); }
 .viewer-empty span { color: #76b900; font-size: 2rem; }
 .viewer-empty h2 { margin: 14px 0 6px; }
 .plot-frame { width: 100%; min-height: 58vh; }
@@ -90,7 +101,14 @@ h1, h2, p { margin-top: 0; }
 .viewer-controls { display: flex; flex-wrap: wrap; gap: 12px; padding: 16px 20px; border-bottom: 1px solid #242a32; }
 .viewer-controls label { display: grid; gap: 5px; color: #aeb3b9; font-size: 0.78rem; }
 .viewer-controls select { min-width: 150px; padding: 7px 9px; }
+.molecule-stage { position: relative; min-height: 320px; }
 .molecule-canvas { width: 100%; min-height: 320px; }
+.xyz-triad { position: absolute; bottom: 18px; left: 18px; width: 68px; height: 68px; border-left: 2px solid #56c76c; border-bottom: 2px solid #ff5a5f; pointer-events: none; }
+.xyz-triad::after { position: absolute; bottom: 0; left: 0; width: 2px; height: 58px; background: #4d8cff; content: ""; transform: rotate(42deg); transform-origin: bottom; }
+.xyz-triad span { position: absolute; z-index: 1; font-size: 0.7rem; font-weight: 800; }
+.axis-x { right: -10px; bottom: -8px; color: #ff7478; }
+.axis-y { top: -8px; left: -12px; color: #6ed47f; }
+.axis-z { top: 3px; right: 3px; color: #6e9fff; }
 .atom-legend { display: flex; flex-wrap: wrap; gap: 14px; padding: 10px 20px; color: #c8ccd0; font-size: 0.78rem; }
 .atom-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .atom-legend i { width: 10px; height: 10px; border-radius: 50%; }

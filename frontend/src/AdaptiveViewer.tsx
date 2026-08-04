@@ -145,7 +145,16 @@ function ConformerPane({ visualization }: { visualization: ConformerVisualizatio
           </select>
         </label>
       </div>
-      <div className="molecule-canvas" ref={canvasRef} aria-label="Interactive 3D molecular conformer" />
+      <div className="molecule-stage">
+        <div className="molecule-canvas" ref={canvasRef} aria-label="Interactive 3D molecular conformer" />
+        {visualization.viewer.xyz_triad && (
+          <div className="xyz-triad" role="img" aria-label="XYZ orientation triad">
+            <span className="axis-x" aria-label="X axis">X</span>
+            <span className="axis-y" aria-label="Y axis">Y</span>
+            <span className="axis-z" aria-label="Z axis">Z</span>
+          </div>
+        )}
+      </div>
       {visualization.viewer.atom_legend && (
         <div className="atom-legend" aria-label="Atom color legend">
           {elements.map((element) => (

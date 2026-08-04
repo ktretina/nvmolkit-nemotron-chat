@@ -6,16 +6,28 @@ import type { PromptId, Visualization } from "./types";
 import "./styles.css";
 
 const SUGGESTED_PROMPTS: Array<{ id: PromptId; label: string }> = [
-  { id: "fingerprints", label: "Profile fingerprint density" },
-  { id: "similarity", label: "Map structural similarity" },
-  { id: "clusters", label: "Find molecular clusters" },
-  { id: "conformers", label: "Explore low-energy conformers" },
+  { id: "fingerprints", label: "Show the Morgan fingerprint density across the bundled molecules." },
+  { id: "similarity", label: "Map structural similarity across the bundled dataset." },
+  { id: "clusters", label: "Cluster the molecules by structural similarity and show the cluster sizes." },
+  { id: "conformers", label: "Generate and compare optimized 3D conformers for representative molecules." },
 ];
+
+const ANALYSIS_FUNCTIONS: Record<Visualization["kind"], string> = {
+  fingerprint_density: "analyze_fingerprint_density",
+  similarity: "analyze_similarity_map",
+  clusters: "analyze_cluster_distribution",
+  conformers: "analyze_representative_conformers",
+};
 
 interface ChatEntry {
   id: number;
   role: "user" | "assistant";
   text: string;
+}
+
+interface FigureContext {
+  functionName: string;
+  requestText: string;
 }
 
 export default function App() {
@@ -25,6 +37,9 @@ export default function App() {
   const [message, setMessage] = useState("");
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [visualization, setVisualization] = useState<Visualization | null>(null);
+  const [figureContext, setFigureContext] = useState<FigureContext | null>(null);
+  const [failedRequest, setFailedRequest] = useState<string | null>(null);
+  const [chatStarted, setChatStarted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,6 +50,13 @@ export default function App() {
         if (!active) return;
         setAuthenticated(session.authenticated);
         setVisualization(session.visualization);
+        if (session.visualization) {
+          setFigureContext({
+            functionName: ANALYSIS_FUNCTIONS[session.visualization.kind],
+            requestText: "Previous successful request",
+          });
+          setChatStarted(true);
+        }
       })
       .catch(() => {
         if (active) setError("The session could not be checked.");
@@ -65,6 +87,7 @@ export default function App() {
   async function runAnalysis(input: { promptId: PromptId; label: string } | { message: string }) {
     if (busy) return;
     const userText = "message" in input ? input.message : input.label;
+    setChatStarted(true);
     setEntries((current) => [...current, { id: Date.now(), role: "user", text: userText }]);
     setBusy(true);
     setError(null);
@@ -73,6 +96,11 @@ export default function App() {
         ? await sendMessage(input.message)
         : await sendSuggestedPrompt(input.promptId);
       setVisualization(result.visualization);
+      setFigureContext({
+        functionName: ANALYSIS_FUNCTIONS[result.visualization.kind],
+        requestText: userText,
+      });
+      setFailedRequest(null);
       const unavailable = result.visualization.interpretation_unavailable;
       const interpretation = result.visualization.interpretation;
       setEntries((current) => [...current, {
@@ -83,6 +111,7 @@ export default function App() {
           : interpretation || "The requested bundled-data figure is ready.",
       }]);
     } catch (caught) {
+      if (visualization) setFailedRequest(userText);
       setError(caught instanceof Error ? caught.message : "The analysis could not be completed.");
     } finally {
       setBusy(false);
@@ -105,6 +134,9 @@ export default function App() {
       await clearSession();
       setAuthenticated(false);
       setVisualization(null);
+      setFigureContext(null);
+      setFailedRequest(null);
+      setChatStarted(false);
       setEntries([]);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The session could not be cleared.");
@@ -152,23 +184,42 @@ export default function App() {
             <h2>Analyze the bundled ChEMBL sample</h2>
             <p>Choose a validated workflow or ask Nemotron to select one of the same four bounded nvMolKit analyses.</p>
           </div>
-          <div className="suggested-prompts" aria-label="Suggested analyses">
-            {SUGGESTED_PROMPTS.map((prompt) => (
-              <button
-                key={prompt.id}
-                type="button"
-                data-testid="suggested-prompt"
-                disabled={busy}
-                onClick={() => void runAnalysis({ promptId: prompt.id, label: prompt.label })}
-              >
-                {prompt.label}
-              </button>
-            ))}
-          </div>
+          {!chatStarted && (
+            <div className="suggested-prompts" aria-label="Suggested analyses">
+              {SUGGESTED_PROMPTS.map((prompt) => (
+                <button
+                  key={prompt.id}
+                  type="button"
+                  data-testid="suggested-prompt"
+                  disabled={busy}
+                  onClick={() => void runAnalysis({ promptId: prompt.id, label: prompt.label })}
+                >
+                  {prompt.label}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="messages" aria-label="Conversation history">
             {entries.map((entry) => <p key={entry.id} className={`message ${entry.role}`}>{entry.text}</p>)}
           </div>
         </div>
+        {chatStarted && (
+          <details className="compact-prompt-menu">
+            <summary>Validated analyses</summary>
+            <div>
+              {SUGGESTED_PROMPTS.map((prompt) => (
+                <button
+                  key={prompt.id}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void runAnalysis({ promptId: prompt.id, label: prompt.label })}
+                >
+                  {prompt.label}
+                </button>
+              ))}
+            </div>
+          </details>
+        )}
         <div className="request-status" role="status" aria-live="polite">
           {busy ? "Computing the molecular analysis…" : "Ready"}
         </div>
@@ -189,7 +240,19 @@ export default function App() {
         <p className="boundary-note">Research visualization only. Results use the bundled dataset and are not medical guidance.</p>
       </section>
       <section className="viewer-pane" aria-label="Scientific visualization">
-        <AdaptiveViewer visualization={visualization} />
+        {figureContext && (
+          <header className="viewer-header">
+            <p>Producing nvMolKit analysis function</p>
+            <h2>{figureContext.functionName}</h2>
+            <p>Result for: “{figureContext.requestText}”</p>
+            {failedRequest && (
+              <p className="retained-result-note">
+                Figure retained from the earlier successful request “{figureContext.requestText}”. Latest request failed: “{failedRequest}”.
+              </p>
+            )}
+          </header>
+        )}
+        <div className="viewer-content"><AdaptiveViewer visualization={visualization} /></div>
       </section>
     </main>
   );

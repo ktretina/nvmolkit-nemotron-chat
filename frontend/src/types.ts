@@ -17,6 +17,10 @@ export interface PlotlyGraph {
   interpretation_unavailable?: boolean;
 }
 
+export type AnalysisPlotlyGraph = Omit<PlotlyGraph, "kind"> & {
+  kind: "fingerprint_density" | "similarity" | "clusters";
+};
+
 export interface Atom {
   index: number;
   element: string;
@@ -60,7 +64,7 @@ export interface ConformerVisualization {
   interpretation_unavailable?: boolean;
 }
 
-export type Visualization = PlotlyGraph | ConformerVisualization;
+export type Visualization = AnalysisPlotlyGraph | ConformerVisualization;
 
 export interface SessionResponse {
   authenticated: boolean;
