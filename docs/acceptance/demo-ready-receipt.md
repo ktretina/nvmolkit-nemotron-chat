@@ -6,8 +6,9 @@
 - Verification window: `2026-08-04T20:38:59Z` through `2026-08-04T20:43:12Z`
 - Branch: `codex/implement-nvmolkit-chat`
 - Verified commit: `6e7ab6c8e8f990c470321412290830ca6234ace2`
+- Accepted public source commit: `d10855402f94eebb8811f107ff8dc4f7118312bf`
 - Local host: macOS (`Darwin`), `arm64`
-- Proof status: local functional tests, frontend typecheck/build, Compose parsing, Python byte-compilation, Ruff, and targeted secret scans passed. A repository-wide ad hoc mypy run did not pass, so this receipt does not assert a clean comprehensive Python typecheck. All container, GPU, hosted-service, Brev, and browser gates remain `not_run`.
+- Proof status: local functional tests, frontend typecheck/build, Compose parsing, Python byte-compilation, Ruff, targeted secret scans, and public repository publication passed. A repository-wide ad hoc mypy run did not pass, so this receipt does not assert a clean comprehensive Python typecheck. All container, GPU, hosted-service, Brev, and browser gates remain `not_run`.
 
 This receipt contains no API key, raw credential-bearing request, hosted response, or Brev state. No billable or shared Brev command was run.
 
@@ -51,22 +52,25 @@ The source notebook repository was inspected read-only at `/Users/ktretina/Deskt
 
 No source-repository file or ref was changed by this release-preparation task. The local source HEAD contains later documentation commits, but the bundled data remains pinned byte-for-byte to the accepted provenance commit.
 
-## GitHub and publication preflight
+## GitHub publication
 
-Read-only checks established:
+Publication state: **PASS**. GitHub reports the repository was created at `2026-08-04T20:51:07Z` and first pushed at `2026-08-04T20:51:25Z`. A fresh readback at `2026-08-04T20:52:00Z` established:
 
-- `gh auth status --hostname github.com`: authenticated as `ktretina`; credential output remained masked.
-- `gh repo view ktretina/nvmolkit-nemotron-chat --json nameWithOwner,visibility,url,defaultBranchRef`: repository not found, so the intended public destination was absent at verification time.
-- `git remote -v`: no remote configured.
-- `git rev-list --left-right --count main...HEAD`: `0 20` before this receipt commit. The implementation branch was a strict descendant of clean local `main` at merge base `5d042f2d2e2c5b700a872ba629281fd94709cbb7`.
+- Repository: `https://github.com/ktretina/nvmolkit-nemotron-chat`.
+- Visibility: `PUBLIC`.
+- Default branch: `main`.
+- `git ls-remote --heads origin main`: `d10855402f94eebb8811f107ff8dc4f7118312bf`.
+- Local `main` tracks `origin/main` at that same commit.
 
-Recommended safe publication sequence:
+The publication transition was bounded and did not retry creation:
 
-1. Decide whether the repository-wide mypy findings are a release blocker; fix them or explicitly define and check a supported mypy scope.
-2. Re-run the complete local gate and independently review the implementation plus this receipt.
-3. Fast-forward clean local `main` to the reviewed implementation branch; do not rewrite either history.
-4. Create `ktretina/nvmolkit-nemotron-chat` as a public repository from the accepted local `main`, push once, then read back visibility, default branch, and exact commit.
-5. Only after publication, obtain the separately approved bounded Brev contract and perform the Launchable/live qualification steps. Do not infer that authorization from this local receipt.
+1. `gh repo create ktretina/nvmolkit-nemotron-chat --public --source=. --remote=origin --push` created the public repository, but its SSH push failed with `Permission denied (publickey)`.
+2. Creation was not retried. Readback showed the existing repository was `PUBLIC` with no default branch because it was still empty.
+3. Only this new repository's `origin` was changed to `https://github.com/ktretina/nvmolkit-nemotron-chat.git`.
+4. `git push -u origin main` succeeded.
+5. Final `gh repo view` readback reported `PUBLIC` with default branch `main`, and `git ls-remote` matched the accepted commit above.
+
+Commit `d10855402f94eebb8811f107ff8dc4f7118312bf` is the accepted public application source. The commit that adds this publication update is intentionally subsequent and is not asserted here to be pushed. No merge, push, or remote mutation was performed while writing this update.
 
 ## Unrun qualification gates
 
@@ -77,7 +81,6 @@ Recommended safe publication sequence:
 | GPU/nvMolKit acceptance | `not_run` | `RUN_GPU_TESTS=1` was not set; no CUDA hardware was used. |
 | Base-image digest pin verification | `not_run` | The Dockerfile's human-readable base tags were not resolved or pinned. |
 | Hosted Nemotron | `not_run` | No API key was entered and no hosted request was made. |
-| Public GitHub repository creation/push | `not_run` | Destination was confirmed absent; no remote mutation was authorized for this subtask. |
 | Brev Launchable authoring | `not_run` | No Brev command or Console mutation was performed. |
 | Brev deployment and exact hardware readback | `not_run` | No bounded Brev contract was obtained or consumed. |
 | Secure Link | `not_run` | No deployment existed. |
@@ -86,4 +89,4 @@ Recommended safe publication sequence:
 
 ## Release conclusion
 
-The repository has fresh local functional evidence, but it is not yet demo-qualified. The comprehensive ad hoc mypy audit is unresolved, and every target-container, GPU, hosted Nemotron, public-repository, Launchable, Secure Link, and browser acceptance gate remains `not_run`.
+The application source is published in a public repository with exact commit readback, but it is not yet demo-qualified. The comprehensive ad hoc mypy audit is unresolved, and every target-container, GPU, hosted Nemotron, Launchable, Secure Link, and browser acceptance gate remains `not_run`.
