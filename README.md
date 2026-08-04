@@ -44,8 +44,15 @@ RUN_GPU_TESTS=1 .venv/bin/python -m pytest ../tests/test_gpu_acceptance.py -q
 
 `deployment/compose.yaml` defines one GPU-enabled application service on port 8000. The multi-stage image runs the locked frontend tests/build and installs `torch==2.7.1+cu128`, `nvmolkit==0.5.0`, and its compatible published CPython 3.12 distribution pin `rdkit==2026.3.1` before serving the static UI through FastAPI as a non-root user.
 
+Compose structure can be checked anywhere the Docker Compose CLI is available:
+
 ```bash
 docker compose -f deployment/compose.yaml config
+```
+
+The image build is for Linux x86-64 target-GPU hosts only. ARM64 Macs are unsupported because the published `nvmolkit==0.5.0` wheels are Linux x86-64; emulation has not been tested or qualified.
+
+```bash
 docker build -f deployment/Dockerfile -t nvmolkit-nemotron-chat:local .
 ```
 

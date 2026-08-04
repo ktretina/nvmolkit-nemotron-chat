@@ -44,3 +44,17 @@ def test_nvmolkit_and_rdkit_distribution_pins_are_compatible() -> None:
     )
     assert "torch==2.7.1+cu128" in nvmolkit_install
     assert "/tmp/backend" in nvmolkit_install
+
+
+def test_deployment_docs_preserve_repository_context_and_architecture_limits() -> None:
+    launchable = (ROOT / "deployment" / "launchable-fields.md").read_text()
+    launchable_lower = launchable.lower()
+    assert "- **compose url" not in launchable_lower
+    assert "raw compose yaml url alone is not accepted" in launchable_lower
+    assert "full accepted repository checkout" in launchable_lower
+    assert "blocking acceptance gate" in launchable_lower
+
+    readme = (ROOT / "README.md").read_text()
+    assert "Linux x86-64 target-GPU hosts only" in readme
+    assert "ARM64 Macs are unsupported" in readme
+    assert "emulation has not been tested" in readme
