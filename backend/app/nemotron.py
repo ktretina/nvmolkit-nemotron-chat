@@ -115,7 +115,7 @@ def select_analysis(client: object, message: str) -> AnalysisSelection:
     """Ask a caller-supplied, key-bound client to select one bounded analysis."""
 
     if not isinstance(message, str):
-        raise ValueError("message must be text")
+        raise NemotronProtocolError("Analysis request must be text")
     user_message = message.strip()
     if not user_message:
         raise ValueError("message must not be empty")
@@ -154,27 +154,57 @@ _SAFE_METADATA_FIELDS = (
 )
 
 
-def _safe_metadata_value(value: Any) -> Any:
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
+_MAX_METADATA_STRINGS = 64
+_MAX_METADATA_STRING_LENGTH = 200
+_MAX_METADATA_DEPTH = 3
+
+
+def _is_label_key(key: str) -> bool:
+    normalized = key.lower()
+    return normalized in {
+        "x",
+        "y",
+        "z",
+        "text",
+        "name",
+        "axis",
+        "legend",
+        "colorbar",
+    } or any(word in normalized for word in ("label", "title", "kind", "unit"))
+
+
+def _count_metadata_string(value: str, string_count: list[int]) -> str:
+    if not value or len(value) > _MAX_METADATA_STRING_LENGTH:
+        raise NemotronProtocolError("Visualization metadata contains invalid text")
+    string_count[0] += 1
+    if string_count[0] > _MAX_METADATA_STRINGS:
+        raise NemotronProtocolError("Visualization metadata is too large")
+    return value
+
+
+def _safe_metadata_value(value: Any, *, depth: int, string_count: list[int]) -> Any:
+    if depth > _MAX_METADATA_DEPTH:
+        raise NemotronProtocolError("Visualization metadata is too deeply nested")
+    if type(value) is str:
+        return _count_metadata_string(value, string_count)
     if isinstance(value, (list, tuple)):
-        return [_safe_metadata_value(item) for item in value]
+        return [
+            _safe_metadata_value(item, depth=depth + 1, string_count=string_count)
+            for item in value
+        ]
     if isinstance(value, Mapping):
         safe: dict[str, Any] = {}
         for key, item in value.items():
-            if not isinstance(key, str):
-                continue
-            normalized = key.lower()
-            if not (
-                normalized in {"x", "y", "z", "text", "name"}
-                or any(
-                    word in normalized for word in ("label", "title", "kind", "unit")
+            if type(key) is not str or not _is_label_key(key):
+                raise NemotronProtocolError(
+                    "Visualization metadata contains a non-label field"
                 )
-            ):
-                continue
-            safe[key] = _safe_metadata_value(item)
+            _count_metadata_string(key, string_count)
+            safe[key] = _safe_metadata_value(
+                item, depth=depth + 1, string_count=string_count
+            )
         return safe
-    return None
+    raise NemotronProtocolError("Visualization metadata must contain only text labels")
 
 
 def interpret_result(
@@ -184,8 +214,11 @@ def interpret_result(
 ) -> str:
     """Interpret compact summary and display labels without sending raw artifacts."""
 
+    string_count = [0]
     safe_metadata = {
-        key: _safe_metadata_value(visualization_metadata[key])
+        key: _safe_metadata_value(
+            visualization_metadata[key], depth=0, string_count=string_count
+        )
         for key in _SAFE_METADATA_FIELDS
         if key in visualization_metadata
     }

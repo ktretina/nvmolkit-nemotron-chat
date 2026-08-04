@@ -135,6 +135,15 @@ def test_select_rejects_invalid_message_without_calling_client(message: str) -> 
     assert fake.chat.completions.requests == []
 
 
+def test_select_rejects_none_message_with_safe_protocol_error() -> None:
+    fake = client()
+
+    with pytest.raises(NemotronProtocolError):
+        select_analysis(fake, None)  # type: ignore[arg-type]
+
+    assert fake.chat.completions.requests == []
+
+
 def test_select_redacts_client_error() -> None:
     fake = client(error=RuntimeError("request failed for nvapi-secret"))
 
@@ -177,28 +186,78 @@ def test_interpretation_payload_uses_summary_and_safe_labels_only() -> None:
     assert "coordinate-sentinel" not in payload
 
 
-def test_interpretation_filters_non_label_data_nested_under_labels() -> None:
+def test_interpretation_rejects_non_label_fields_nested_under_labels() -> None:
+    fake = client()
+
+    with pytest.raises(NemotronProtocolError):
+        interpret_result(
+            fake,
+            AnalysisResult(
+                kind=AnalysisKind.SIMILARITY, summary={"mean": 0.5}, artifact={}
+            ),
+            {
+                "kind": "heatmap",
+                "labels": {
+                    "x_label": "Molecule ID",
+                    "coordinates": ["nested-coordinate-sentinel"],
+                    "matrix": [["nested-matrix-sentinel"]],
+                },
+            },
+        )
+
+    assert fake.chat.completions.requests == []
+
+
+@pytest.mark.parametrize(
+    "labels",
+    [
+        {"x": [[1.0, 0.2], [0.2, 1.0]]},
+        {"x": ["Molecule ID", 3]},
+        {"x": {"title": {"text": {"label": "too deep"}}}},
+        {"x": [f"label-{index}" for index in range(65)]},
+        {"x": "x" * 201},
+        {"label" + "x" * 201: "Molecule ID"},
+        {"x": None},
+        {"x": True},
+    ],
+)
+def test_interpretation_rejects_noncompact_nontextual_labels_before_client_call(
+    labels: object,
+) -> None:
+    fake = client()
+
+    with pytest.raises(NemotronProtocolError):
+        interpret_result(
+            fake,
+            AnalysisResult(
+                kind=AnalysisKind.SIMILARITY, summary={"mean": 0.5}, artifact={}
+            ),
+            {"kind": "heatmap", "labels": labels},
+        )
+
+    assert fake.chat.completions.requests == []
+
+
+def test_interpretation_preserves_bounded_textual_label_metadata() -> None:
     fake = client(completion(content="A bounded interpretation."))
 
     interpret_result(
         fake,
-        AnalysisResult(
-            kind=AnalysisKind.SIMILARITY, summary={"mean": 0.5}, artifact={}
-        ),
+        AnalysisResult(kind=AnalysisKind.CLUSTERS, summary={"count": 2}, artifact={}),
         {
-            "kind": "heatmap",
+            "kind": "bar",
             "labels": {
-                "x_label": "Molecule ID",
-                "coordinates": ["nested-coordinate-sentinel"],
-                "matrix": [["nested-matrix-sentinel"]],
+                "x": "Cluster ID",
+                "y": "Molecule count",
+                "legend": ["Cluster", "Representative"],
             },
         },
     )
 
     payload = json.dumps(fake.chat.completions.requests[0])
-    assert "Molecule ID" in payload
-    assert "nested-coordinate-sentinel" not in payload
-    assert "nested-matrix-sentinel" not in payload
+    assert "Cluster ID" in payload
+    assert "Molecule count" in payload
+    assert "Representative" in payload
 
 
 @pytest.mark.parametrize(
