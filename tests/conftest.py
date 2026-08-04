@@ -28,8 +28,16 @@ class FakeRuntime:
         }[stage]
         return AnalysisResult(
             kind=kind,
-            summary={"terminal_stage": stage, "call_number": len(self.calls)},
-            artifact={"stage": stage, "token": len(self.calls)},
+            summary={
+                "terminal_stage": stage,
+                "call_number": len(self.calls),
+                "nested": {"values": [stage]},
+            },
+            artifact={
+                "stage": stage,
+                "token": len(self.calls),
+                "nested": {"values": [stage]},
+            },
         )
 
     def load(self) -> dict[str, Any]:

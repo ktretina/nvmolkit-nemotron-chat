@@ -35,6 +35,13 @@ _TERMINAL_STAGE = {
     AnalysisKind.CLUSTERS: "clusters",
     AnalysisKind.CONFORMERS: "optimize",
 }
+_STAGE_KIND = {
+    "fingerprints": AnalysisKind.FINGERPRINT_DENSITY,
+    "similarity": AnalysisKind.SIMILARITY,
+    "clusters": AnalysisKind.CLUSTERS,
+    "embed": AnalysisKind.CONFORMERS,
+    "optimize": AnalysisKind.CONFORMERS,
+}
 
 
 class AnalysisEngine:
@@ -85,12 +92,15 @@ class AnalysisEngine:
                 result = self.runtime.optimize(self.state)
             if not isinstance(result, AnalysisResult):
                 raise TypeError(f"runtime stage {stage!r} did not return AnalysisResult")
-            self._results[stage] = result
+            if result.kind is not _STAGE_KIND[stage]:
+                raise RuntimeError(
+                    f"runtime stage {stage!r} returned kind {result.kind!r}; "
+                    f"expected {_STAGE_KIND[stage]!r}"
+                )
+            self._results[stage] = result.model_copy(deep=True)
 
         result = self._results[terminal]
-        if result.kind is analysis_kind:
-            return result
-        return result.model_copy(update={"kind": analysis_kind})
+        return result.model_copy(deep=True)
 
     @staticmethod
     def _fingerprint_signature(params: AnalysisParameters) -> tuple[int, int]:
@@ -132,6 +142,7 @@ class _NvMolKitState:
     representatives: list[dict[str, Any]] = field(default_factory=list)
     conformer_molecules: list[Any] = field(default_factory=list)
     optimization_result: Any = None
+    records_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class NvMolKitRuntime:
@@ -168,7 +179,7 @@ class NvMolKitRuntime:
             state.molecules.append(molecule)
         if not state.molecules:
             raise ValueError("input library produced zero valid molecules")
-        state.records_metadata = {  # type: ignore[attr-defined]
+        state.records_metadata = {
             "raw_count": int(len(table)),
             "valid_count": len(state.molecules),
             "invalid_count": len(invalid_ids),
@@ -201,9 +212,6 @@ class NvMolKitRuntime:
             axis=1, dtype=np.int64
         )
         current.fingerprints = fingerprints
-        histogram_counts, histogram_edges = np.histogram(
-            active_bits, bins=min(20, max(1, len(active_bits)))
-        )
         return AnalysisResult(
             kind=AnalysisKind.FINGERPRINT_DENSITY,
             summary={
@@ -217,10 +225,7 @@ class NvMolKitRuntime:
                 "active_bits_max": int(active_bits.max()),
                 "cuda_device": str(tensor.device),
             },
-            artifact={
-                "histogram_counts": histogram_counts.astype(int).tolist(),
-                "histogram_edges": histogram_edges.astype(float).tolist(),
-            },
+            artifact=_fingerprint_artifact(active_bits, current.records),
         )
 
     def similarity(self, state: object) -> AnalysisResult:
@@ -267,7 +272,7 @@ class NvMolKitRuntime:
                     "similarity": float(values[maximum]),
                 },
             },
-            artifact={"matrix": matrix.astype(float).tolist()},
+            artifact=_similarity_artifact(matrix, current.records),
         )
 
     def clusters(
@@ -306,10 +311,7 @@ class NvMolKitRuntime:
                 "assignment_count": len(assigned),
                 "mmff94_eligible_cluster_count": len(groups),
             },
-            artifact={
-                "clusters": clusters,
-                "eligible_representatives_by_cluster": groups,
-            },
+            artifact=_cluster_artifact(clusters, groups),
         )
 
     def embed(self, state: object, params: AnalysisParameters) -> AnalysisResult:
@@ -401,29 +403,7 @@ class NvMolKitRuntime:
         records, authoritative_pairs = _optimization_records(
             result, molecules, successful
         )
-        coordinate_groups = result.per_molecule()
-        if len(coordinate_groups) != len(molecules):
-            raise RuntimeError("MMFF94 coordinate molecule totals are unreconciled")
-        for molecule, coordinates in zip(molecules, coordinate_groups):
-            if len(coordinates) != molecule.GetNumConformers():
-                raise RuntimeError("MMFF94 coordinate conformer totals are unreconciled")
-
-        offsets = [0] * len(molecules)
-        updates: list[tuple[Any, int, np.ndarray]] = []
-        for molecule_index, conformer_index in authoritative_pairs:
-            offset = offsets[molecule_index]
-            if offset >= len(coordinate_groups[molecule_index]):
-                raise RuntimeError("MMFF94 coordinate pairs are unreconciled")
-            coordinates = _host_array(coordinate_groups[molecule_index][offset])
-            offsets[molecule_index] += 1
-            molecule = molecules[molecule_index]
-            if coordinates.shape != (molecule.GetNumAtoms(), 3):
-                raise RuntimeError("optimized coordinate array has the wrong shape")
-            if not np.isfinite(coordinates).all():
-                raise RuntimeError("optimized coordinates contain non-finite values")
-            updates.append((molecule, conformer_index, coordinates))
-        if offsets != [len(group) for group in coordinate_groups]:
-            raise RuntimeError("MMFF94 coordinate pairs are unreconciled")
+        updates = _coordinate_updates(result, molecules, authoritative_pairs)
         for molecule, conformer_index, coordinates in updates:
             conformer = molecule.GetConformer(conformer_index)
             for atom_index, (x, y, z) in enumerate(coordinates):
@@ -459,10 +439,7 @@ class NvMolKitRuntime:
             "unconverged_conformer_count": attempted - converged_count,
             "scope": "computational chemistry analysis only",
         }
-        artifact = {
-            "per_conformer_records": records,
-            "selected_conformer_records": selected,
-        }
+        artifact = _conformer_artifact(molecules, records, selected)
         _ensure_finite_json({"summary": summary, "artifact": artifact})
         current.conformer_molecules = molecules
         current.optimization_result = result
@@ -541,20 +518,30 @@ def _optimization_records(
         raise RuntimeError("MMFF94 result buffers must have the same length")
     if not np.isfinite(energies).all():
         raise RuntimeError("MMFF94 energies contain non-finite values")
-    convergence_values = [int(value) for value in convergence.tolist()]
+    convergence_values = _exact_nonnegative_integers(convergence, "convergence flags")
     if set(convergence_values) - {0, 1}:
         raise RuntimeError("MMFF94 convergence flags must be binary")
+    molecule_values = _exact_nonnegative_integers(
+        molecule_indices, "molecule indices"
+    )
+    conformer_values = _exact_nonnegative_integers(
+        conformer_indices, "conformer indices"
+    )
+    if any(index >= len(molecules) for index in molecule_values):
+        raise RuntimeError("MMFF94 molecule indices are out of range")
+    if any(
+        conformer_index >= molecules[molecule_index].GetNumConformers()
+        for molecule_index, conformer_index in zip(
+            molecule_values, conformer_values
+        )
+    ):
+        raise RuntimeError("MMFF94 conformer indices are out of range")
     expected_pairs = {
         (molecule_index, conformer_index)
         for molecule_index, molecule in enumerate(molecules)
         for conformer_index in range(molecule.GetNumConformers())
     }
-    pairs = [
-        (int(molecule_index), int(conformer_index))
-        for molecule_index, conformer_index in zip(
-            molecule_indices.tolist(), conformer_indices.tolist()
-        )
-    ]
+    pairs = list(zip(molecule_values, conformer_values))
     if len(pairs) != len(set(pairs)) or set(pairs) != expected_pairs:
         raise RuntimeError("MMFF94 molecule/conformer pairs are incomplete or duplicated")
     records = [
@@ -576,6 +563,199 @@ def _optimization_records(
         )
     )
     return records, pairs
+
+
+def _exact_nonnegative_integers(values: np.ndarray, label: str) -> list[int]:
+    try:
+        numeric = np.asarray(values, dtype=np.float64)
+    except (TypeError, ValueError) as error:
+        raise RuntimeError(f"MMFF94 {label} must be numeric") from error
+    if not np.isfinite(numeric).all():
+        raise RuntimeError(f"MMFF94 {label} must be finite")
+    if not np.equal(numeric, np.floor(numeric)).all():
+        raise RuntimeError(f"MMFF94 {label} must be exact integers")
+    if np.any(numeric < 0):
+        raise RuntimeError(f"MMFF94 {label} must be nonnegative")
+    return [int(value) for value in numeric.tolist()]
+
+
+def _coordinate_updates(
+    result: Any,
+    molecules: list[Any],
+    authoritative_pairs: list[tuple[int, int]],
+) -> list[tuple[Any, int, np.ndarray]]:
+    coordinate_groups = result.per_molecule()
+    if len(coordinate_groups) != len(molecules):
+        raise RuntimeError("MMFF94 coordinate molecule totals are unreconciled")
+    expected_counts = [molecule.GetNumConformers() for molecule in molecules]
+    if [len(group) for group in coordinate_groups] != expected_counts:
+        raise RuntimeError("MMFF94 coordinate conformer totals are unreconciled")
+    expected_pairs = {
+        (molecule_index, conformer_index)
+        for molecule_index, conformer_count in enumerate(expected_counts)
+        for conformer_index in range(conformer_count)
+    }
+    if (
+        len(authoritative_pairs) != len(expected_pairs)
+        or len(set(authoritative_pairs)) != len(authoritative_pairs)
+        or set(authoritative_pairs) != expected_pairs
+    ):
+        raise RuntimeError("MMFF94 coordinate pairs are unreconciled")
+
+    offsets = [0] * len(molecules)
+    updates: list[tuple[Any, int, np.ndarray]] = []
+    for molecule_index, conformer_index in authoritative_pairs:
+        if not 0 <= molecule_index < len(molecules):
+            raise RuntimeError("MMFF94 coordinate pairs are unreconciled")
+        offset = offsets[molecule_index]
+        if offset >= len(coordinate_groups[molecule_index]):
+            raise RuntimeError("MMFF94 coordinate pairs are unreconciled")
+        coordinates = _host_array(coordinate_groups[molecule_index][offset])
+        offsets[molecule_index] += 1
+        molecule = molecules[molecule_index]
+        if not 0 <= conformer_index < molecule.GetNumConformers():
+            raise RuntimeError("MMFF94 coordinate pairs are unreconciled")
+        if coordinates.shape != (molecule.GetNumAtoms(), 3):
+            raise RuntimeError("optimized coordinate array has the wrong shape")
+        if not np.isfinite(coordinates).all():
+            raise RuntimeError("optimized coordinates contain non-finite values")
+        updates.append((molecule, conformer_index, coordinates))
+    if offsets != expected_counts:
+        raise RuntimeError("MMFF94 coordinate pairs are unreconciled")
+    return updates
+
+
+def _molecule_ids(records: list[dict[str, Any]]) -> list[str]:
+    return [str(record["id"]) for record in records]
+
+
+def _fingerprint_artifact(
+    active_bits: Any, records: list[dict[str, Any]]
+) -> dict[str, Any]:
+    counts = np.asarray(active_bits).reshape(-1)
+    if len(counts) != len(records):
+        raise RuntimeError("fingerprint active-bit counts are not molecule-aligned")
+    if not np.isfinite(counts).all():
+        raise RuntimeError("fingerprint active-bit counts contain non-finite values")
+    histogram_counts, histogram_edges = np.histogram(
+        counts, bins=min(20, max(1, len(counts)))
+    )
+    artifact = {
+        "molecule_ids": _molecule_ids(records),
+        "active_bit_counts": counts.astype(int).tolist(),
+        "histogram_counts": histogram_counts.astype(int).tolist(),
+        "histogram_edges": histogram_edges.astype(float).tolist(),
+    }
+    _ensure_finite_json(artifact)
+    return artifact
+
+
+def _similarity_artifact(
+    matrix: Any, records: list[dict[str, Any]]
+) -> dict[str, Any]:
+    values = np.asarray(matrix, dtype=float)
+    count = len(records)
+    if values.shape != (count, count):
+        raise RuntimeError("similarity matrix is not molecule-aligned")
+    if not np.isfinite(values).all():
+        raise RuntimeError("similarity matrix contains non-finite values")
+    return {"molecule_ids": _molecule_ids(records), "matrix": values.tolist()}
+
+
+def _cluster_artifact(
+    clusters: list[list[int]], groups: list[dict[str, Any]]
+) -> dict[str, Any]:
+    representative_ids = [
+        str(group["members"][0]["molecule_id"]) for group in groups
+    ]
+    return {
+        "clusters": clusters,
+        "eligible_representatives_by_cluster": groups,
+        "cluster_sizes": [len(cluster) for cluster in clusters],
+        "representative_molecule_ids": representative_ids,
+    }
+
+
+def _conformer_artifact(
+    molecules: list[Any],
+    records: list[dict[str, Any]],
+    selected: list[dict[str, Any]],
+) -> dict[str, Any]:
+    minimum_energies: dict[int, float] = {}
+    for record in records:
+        molecule_index = int(record["optimization_molecule_index"])
+        energy = float(record["energy_kcal_mol"])
+        minimum_energies[molecule_index] = min(
+            energy, minimum_energies.get(molecule_index, energy)
+        )
+
+    enriched_records: list[dict[str, Any]] = []
+    structures: list[dict[str, Any]] = []
+    for source in records:
+        record = dict(source)
+        molecule_index = int(record["optimization_molecule_index"])
+        conformer_index = int(record["conformer_index"])
+        if not 0 <= molecule_index < len(molecules):
+            raise RuntimeError("conformer record molecule index is out of range")
+        record["relative_energy_kcal_mol"] = float(
+            record["energy_kcal_mol"] - minimum_energies[molecule_index]
+        )
+        record["conformer_id"] = (
+            f"{record['molecule_id']}:conf-{conformer_index}"
+        )
+        enriched_records.append(record)
+        molecule = molecules[molecule_index]
+        conformer = molecule.GetConformer(conformer_index)
+        atoms = [
+            {"index": int(atom.GetIdx()), "element": str(atom.GetSymbol())}
+            for atom in molecule.GetAtoms()
+        ]
+        bonds = [
+            {
+                "begin": int(bond.GetBeginAtomIdx()),
+                "end": int(bond.GetEndAtomIdx()),
+                "order": float(bond.GetBondTypeAsDouble()),
+            }
+            for bond in molecule.GetBonds()
+        ]
+        coordinates = []
+        for atom_index in range(molecule.GetNumAtoms()):
+            position = conformer.GetAtomPosition(atom_index)
+            coordinates.append(
+                [float(position.x), float(position.y), float(position.z)]
+            )
+        structures.append(
+            {
+                "molecule_id": str(record["molecule_id"]),
+                "conformer_index": conformer_index,
+                "conformer_id": record["conformer_id"],
+                "atoms": atoms,
+                "bonds": bonds,
+                "coordinates": coordinates,
+                "relative_energy_kcal_mol": record[
+                    "relative_energy_kcal_mol"
+                ],
+            }
+        )
+    selected_records: list[dict[str, Any]] = []
+    for source in selected:
+        record = dict(source)
+        molecule_index = int(record["optimization_molecule_index"])
+        conformer_index = int(record["conformer_index"])
+        record["relative_energy_kcal_mol"] = float(
+            record["energy_kcal_mol"] - minimum_energies[molecule_index]
+        )
+        record["conformer_id"] = (
+            f"{record['molecule_id']}:conf-{conformer_index}"
+        )
+        selected_records.append(record)
+    artifact = {
+        "per_conformer_records": enriched_records,
+        "selected_conformer_records": selected_records,
+        "renderable_structures": structures,
+    }
+    _ensure_finite_json(artifact)
+    return artifact
 
 
 def _ensure_finite_json(payload: dict[str, Any]) -> None:
