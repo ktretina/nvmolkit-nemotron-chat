@@ -10,8 +10,9 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
-from app.main import ChatRequest, create_app
+from app.main import ChatRequest, _production_nemotron_client, create_app
 
 if TYPE_CHECKING:
     AnalysisEngine: TypeAlias = Any
@@ -297,6 +298,23 @@ def test_session_cookie_security_secrecy_get_delete_and_expiry() -> None:
     assert factory.keys == []
 
 
+def test_key_rotation_then_logout_revokes_old_and_new_sessions() -> None:
+    client, _, store = _client([FakeEngine(), FakeEngine()], [])
+    _authenticate(client, "first")
+    old_token = client.cookies["session"]
+
+    _authenticate(client, "second")
+    new_token = client.cookies["session"]
+
+    assert new_token != old_token
+    assert store.get(old_token) is None
+    assert store.get(new_token) is not None
+
+    assert client.delete("/api/session").status_code == 200
+    assert store.get(old_token) is None
+    assert store.get(new_token) is None
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -309,7 +327,7 @@ def test_session_cookie_security_secrecy_get_delete_and_expiry() -> None:
     ],
 )
 def test_chat_request_is_strict_and_exactly_one(payload: dict[str, Any]) -> None:
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         ChatRequest.model_validate(payload)
 
 
@@ -442,6 +460,27 @@ def test_interpreter_receives_textual_metadata_only_not_artifact() -> None:
     assert "Tanimoto similarity" in payload
 
 
+def test_production_nemotron_client_has_bounded_timeout_and_no_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+    sentinel = object()
+
+    def fake_openai(**kwargs: Any) -> object:
+        captured.update(kwargs)
+        return sentinel
+
+    monkeypatch.setattr("openai.OpenAI", fake_openai)
+
+    assert _production_nemotron_client(SECRET) is sentinel
+    assert captured == {
+        "api_key": SECRET,
+        "base_url": "https://integrate.api.nvidia.com/v1",
+        "timeout": 30.0,
+        "max_retries": 0,
+    }
+
+
 def test_same_session_chats_serialize_and_different_sessions_overlap() -> None:
     active = 0
     maximum = 0
@@ -465,15 +504,16 @@ def test_same_session_chats_serialize_and_different_sessions_overlap() -> None:
                     active -= 1
 
     engines = [TrackingEngine(), TrackingEngine()]
-    client, _, _ = _client(engines, [NemotronError("offline")] * 4)
-    _authenticate(client, "one")
-    token_one = client.cookies["session"]
-    _authenticate(client, "two")
-    token_two = client.cookies["session"]
+    client_one, _, _ = _client(engines, [NemotronError("offline")] * 4)
+    client_two = TestClient(client_one.app, base_url="https://testserver")
+    _authenticate(client_one, "one")
+    token_one = client_one.cookies["session"]
+    _authenticate(client_two, "two")
+    token_two = client_two.cookies["session"]
 
     def post(token: str) -> int:
         worker = TestClient(
-            client.app, base_url="https://testserver", cookies={"session": token}
+            client_one.app, base_url="https://testserver", cookies={"session": token}
         )
         return worker.post("/api/chat", json={"prompt_id": "similarity"}).status_code
 

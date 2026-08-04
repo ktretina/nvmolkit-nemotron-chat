@@ -96,7 +96,12 @@ def _production_nemotron_client(api_key: str) -> object:
     # Keep both the dependency and credential-bound client out of import-time work.
     from openai import OpenAI
 
-    return OpenAI(api_key=api_key, base_url="https://integrate.api.nvidia.com/v1")
+    return OpenAI(
+        api_key=api_key,
+        base_url="https://integrate.api.nvidia.com/v1",
+        timeout=30.0,
+        max_retries=0,
+    )
 
 
 def _production_readiness() -> dict[str, bool]:
@@ -319,8 +324,14 @@ def create_app(
         return JSONResponse(status_code=422, content={"detail": "Invalid request."})
 
     @app.post("/api/session/key")
-    def set_session_key(request: ApiKeyRequest, response: Response) -> dict[str, bool]:
+    def set_session_key(
+        request: ApiKeyRequest,
+        response: Response,
+        session: Annotated[str | None, Cookie()] = None,
+    ) -> dict[str, bool]:
         token = store.create(request.api_key)
+        if session:
+            store.delete(session)
         response.set_cookie(
             "session",
             token,
