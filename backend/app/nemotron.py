@@ -102,6 +102,11 @@ def parse_analysis_call(completion: object) -> AnalysisSelection:
         ) from None
     if not isinstance(arguments, dict):
         raise NemotronProtocolError("Hosted model returned invalid analysis parameters")
+    for field_name in ("fingerprint_radius", "fingerprint_size"):
+        if field_name in arguments and type(arguments[field_name]) is not int:
+            raise NemotronProtocolError(
+                "Hosted model returned invalid analysis parameters"
+            )
     try:
         params = AnalysisParameters.model_validate(arguments)
     except ValidationError:
@@ -149,28 +154,33 @@ _SAFE_METADATA_FIELDS = (
     "labels",
     "x_label",
     "y_label",
-    "z_label",
     "axis_labels",
+    "colorbar_label",
+    "legend_label",
+    "units",
 )
 
 
 _MAX_METADATA_STRINGS = 64
 _MAX_METADATA_STRING_LENGTH = 200
 _MAX_METADATA_DEPTH = 3
-
-
-def _is_label_key(key: str) -> bool:
-    normalized = key.lower()
-    return normalized in {
+_MAX_METADATA_NODES = 128
+_MAX_METADATA_CONTAINER_LENGTH = 32
+_MAX_METADATA_BYTES = 8192
+_ALLOWED_METADATA_KEYS = frozenset(
+    {
+        *_SAFE_METADATA_FIELDS,
         "x",
         "y",
         "z",
         "text",
         "name",
-        "axis",
-        "legend",
-        "colorbar",
-    } or any(word in normalized for word in ("label", "title", "kind", "unit"))
+    }
+)
+
+
+def _is_label_key(key: str) -> bool:
+    return key in _ALLOWED_METADATA_KEYS
 
 
 def _count_metadata_string(value: str, string_count: list[int]) -> str:
@@ -182,17 +192,33 @@ def _count_metadata_string(value: str, string_count: list[int]) -> str:
     return value
 
 
-def _safe_metadata_value(value: Any, *, depth: int, string_count: list[int]) -> Any:
+def _safe_metadata_value(
+    value: Any, *, depth: int, string_count: list[int], node_count: list[int]
+) -> Any:
+    node_count[0] += 1
+    if node_count[0] > _MAX_METADATA_NODES:
+        raise NemotronProtocolError("Visualization metadata is too large")
     if depth > _MAX_METADATA_DEPTH:
         raise NemotronProtocolError("Visualization metadata is too deeply nested")
     if type(value) is str:
         return _count_metadata_string(value, string_count)
     if isinstance(value, (list, tuple)):
+        if not value or len(value) > _MAX_METADATA_CONTAINER_LENGTH:
+            raise NemotronProtocolError("Visualization metadata has invalid list size")
         return [
-            _safe_metadata_value(item, depth=depth + 1, string_count=string_count)
+            _safe_metadata_value(
+                item,
+                depth=depth + 1,
+                string_count=string_count,
+                node_count=node_count,
+            )
             for item in value
         ]
     if isinstance(value, Mapping):
+        if not value or len(value) > _MAX_METADATA_CONTAINER_LENGTH:
+            raise NemotronProtocolError(
+                "Visualization metadata has invalid mapping size"
+            )
         safe: dict[str, Any] = {}
         for key, item in value.items():
             if type(key) is not str or not _is_label_key(key):
@@ -201,7 +227,10 @@ def _safe_metadata_value(value: Any, *, depth: int, string_count: list[int]) -> 
                 )
             _count_metadata_string(key, string_count)
             safe[key] = _safe_metadata_value(
-                item, depth=depth + 1, string_count=string_count
+                item,
+                depth=depth + 1,
+                string_count=string_count,
+                node_count=node_count,
             )
         return safe
     raise NemotronProtocolError("Visualization metadata must contain only text labels")
@@ -215,13 +244,20 @@ def interpret_result(
     """Interpret compact summary and display labels without sending raw artifacts."""
 
     string_count = [0]
+    node_count = [0]
     safe_metadata = {
         key: _safe_metadata_value(
-            visualization_metadata[key], depth=0, string_count=string_count
+            visualization_metadata[key],
+            depth=0,
+            string_count=string_count,
+            node_count=node_count,
         )
         for key in _SAFE_METADATA_FIELDS
         if key in visualization_metadata
     }
+    serialized_metadata = json.dumps(safe_metadata, separators=(",", ":"))
+    if len(serialized_metadata.encode("utf-8")) > _MAX_METADATA_BYTES:
+        raise NemotronProtocolError("Visualization metadata is too large")
     compact_context = {
         "analysis_kind": result.kind.value,
         "summary": result.summary,
@@ -243,6 +279,7 @@ def interpret_result(
                 "content": json.dumps(compact_context, separators=(",", ":")),
             },
         ],
+        "max_tokens": 256,
     }
     try:
         response = client.chat.completions.create(**request)  # type: ignore[attr-defined]
@@ -254,4 +291,7 @@ def interpret_result(
         raise NemotronError("Hosted interpretation returned no text") from None
     if not isinstance(content, str) or not content.strip():
         raise NemotronError("Hosted interpretation returned no text")
-    return content.strip()
+    interpretation = content.strip()
+    if len(interpretation) > 2000:
+        raise NemotronError("Hosted interpretation returned too much text")
+    return interpretation

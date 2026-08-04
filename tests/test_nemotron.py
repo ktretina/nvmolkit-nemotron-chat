@@ -87,6 +87,9 @@ def test_parse_maps_each_tool_to_exact_analysis_kind(
         completion(call(arguments='{"extra": 1}')),
         completion(call(arguments='{"cluster_cutoff": 0.61}')),
         completion(call(arguments='{"representative_count": 2}')),
+        completion(call(arguments='{"fingerprint_radius": 2.0}')),
+        completion(call(arguments='{"fingerprint_size": 2048.0}')),
+        completion(call(arguments='{"fingerprint_radius": true}')),
     ],
 )
 def test_parse_rejects_invalid_or_unbounded_tool_calls(bad_completion: object) -> None:
@@ -117,7 +120,7 @@ def test_select_sends_only_bounded_message_and_four_tools() -> None:
     assert selection.kind is AnalysisKind.CLUSTERS
     request = fake.chat.completions.requests[0]
     assert len(request["tools"]) == 4
-    assert request["tool_choice"] in ("auto", "required")
+    assert request["tool_choice"] == "required"
     payload = json.dumps(request)
     assert "compare molecular clusters" in payload
     assert secret not in payload
@@ -217,6 +220,11 @@ def test_interpretation_rejects_non_label_fields_nested_under_labels() -> None:
         {"x": [f"label-{index}" for index in range(65)]},
         {"x": "x" * 201},
         {"label" + "x" * 201: "Molecule ID"},
+        {"labelfoo": "Molecule ID"},
+        {"unkindness": "heatmap"},
+        {"x": []},
+        {"x": [[] for _ in range(100_000)]},
+        {"x": [f"label-{index}" for index in range(33)]},
         {"x": None},
         {"x": True},
     ],
@@ -249,7 +257,7 @@ def test_interpretation_preserves_bounded_textual_label_metadata() -> None:
             "labels": {
                 "x": "Cluster ID",
                 "y": "Molecule count",
-                "legend": ["Cluster", "Representative"],
+                "legend_label": ["Cluster", "Representative"],
             },
         },
     )
@@ -258,6 +266,85 @@ def test_interpretation_preserves_bounded_textual_label_metadata() -> None:
     assert "Cluster ID" in payload
     assert "Molecule count" in payload
     assert "Representative" in payload
+
+
+def test_interpretation_accepts_container_and_payload_boundaries() -> None:
+    fake = client(completion(content="A bounded interpretation."))
+    boundary_labels = [f"label-{index}" for index in range(32)]
+    near_byte_limit = ["x" * 200 for _ in range(20)]
+
+    interpret_result(
+        fake,
+        AnalysisResult(kind=AnalysisKind.CLUSTERS, summary={"count": 2}, artifact={}),
+        {
+            "kind": "bar",
+            "labels": {
+                "legend_label": boundary_labels,
+                "x_label": near_byte_limit,
+            },
+        },
+    )
+
+    assert len(fake.chat.completions.requests) == 1
+
+
+def test_interpretation_rejects_oversized_serialized_metadata_before_client() -> None:
+    fake = client()
+    long_labels = ["x" * 200 for _ in range(25)]
+
+    with pytest.raises(NemotronProtocolError):
+        interpret_result(
+            fake,
+            AnalysisResult(
+                kind=AnalysisKind.CLUSTERS, summary={"count": 2}, artifact={}
+            ),
+            {
+                "kind": "bar",
+                "labels": {
+                    "x_label": long_labels,
+                    "y_label": long_labels,
+                },
+            },
+        )
+
+    assert fake.chat.completions.requests == []
+
+
+def test_interpretation_request_caps_provider_output_tokens() -> None:
+    fake = client(completion(content="A bounded interpretation."))
+
+    interpret_result(
+        fake,
+        AnalysisResult(kind=AnalysisKind.CLUSTERS, summary={"count": 2}, artifact={}),
+        {"kind": "bar", "x_label": "Cluster ID"},
+    )
+
+    assert fake.chat.completions.requests[0]["max_tokens"] == 256
+
+
+def test_interpretation_rejects_oversized_returned_text() -> None:
+    fake = client(completion(content="x" * 2001))
+
+    with pytest.raises(NemotronError):
+        interpret_result(
+            fake,
+            AnalysisResult(
+                kind=AnalysisKind.CLUSTERS, summary={"count": 2}, artifact={}
+            ),
+            {"kind": "bar"},
+        )
+
+
+def test_interpretation_accepts_2000_character_returned_text() -> None:
+    fake = client(completion(content="x" * 2000))
+
+    interpretation = interpret_result(
+        fake,
+        AnalysisResult(kind=AnalysisKind.CLUSTERS, summary={"count": 2}, artifact={}),
+        {"kind": "bar"},
+    )
+
+    assert len(interpretation) == 2000
 
 
 @pytest.mark.parametrize(

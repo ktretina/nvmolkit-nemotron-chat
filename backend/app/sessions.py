@@ -7,10 +7,14 @@ callers must never serialize a session because it contains the user's API key.
 from __future__ import annotations
 
 import secrets
+import threading
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar, Iterator
+
+from pydantic import SecretStr
 
 from .chemistry import AnalysisEngine
 from .config import SETTINGS
@@ -20,10 +24,23 @@ from .config import SETTINGS
 class Session:
     """Minimal mutable server state; this type must not cross the API boundary."""
 
-    api_key: str = field(repr=False)
+    api_key: SecretStr = field(repr=False)
     touched_at: float
     engine: AnalysisEngine
     latest_visualization: dict[str, Any] | None = None
+    _lock: ClassVar[threading.RLock]
+    _active_leases: ClassVar[int]
+
+    def __post_init__(self) -> None:
+        # Internal synchronization state is intentionally not a dataclass field, so
+        # serializers such as dataclasses.asdict cannot traverse the lock.
+        self._lock = threading.RLock()
+        self._active_leases = 0
+
+    def api_key_value(self) -> str:
+        """Return the raw key for local client construction only."""
+
+        return self.api_key.get_secret_value()
 
 
 class SessionStore:
@@ -42,45 +59,94 @@ class SessionStore:
         self._clock = clock
         self._idle_seconds = idle_seconds
         self._sessions: dict[str, Session] = {}
+        self._lock = threading.RLock()
 
     def __repr__(self) -> str:
-        return (
-            f"{type(self).__name__}(idle_seconds={self._idle_seconds!r}, "
-            f"session_count={len(self._sessions)})"
-        )
+        with self._lock:
+            return (
+                f"{type(self).__name__}(idle_seconds={self._idle_seconds!r}, "
+                f"session_count={len(self._sessions)})"
+            )
 
     def create(self, api_key: str) -> str:
-        now = self._clock()
-        self._prune(now)
         if not isinstance(api_key, str) or not api_key.strip():
             raise ValueError("API key is required")
+        with self._lock:
+            self._prune(self._clock())
+        engine = self._engine_factory()
         token = secrets.token_urlsafe(32)
-        while token in self._sessions:  # defensive against an injected RNG failure
-            token = secrets.token_urlsafe(32)
-        self._sessions[token] = Session(
-            api_key=api_key,
-            touched_at=now,
-            engine=self._engine_factory(),
-        )
+        with self._lock:
+            now = self._clock()
+            self._prune(now)
+            while token in self._sessions:  # defensive against an RNG failure
+                token = secrets.token_urlsafe(32)
+            self._sessions[token] = Session(
+                api_key=SecretStr(api_key),
+                touched_at=now,
+                engine=engine,
+            )
         return token
 
     def get(self, token: str) -> Session | None:
-        now = self._clock()
-        self._prune(now)
-        session = self._sessions.get(token)
-        if session is not None:
-            session.touched_at = now
-        return session
+        with self._lock:
+            now = self._clock()
+            self._prune(now)
+            session = self._sessions.get(token)
+            if session is not None:
+                session.touched_at = now
+            return session
 
     def delete(self, token: str) -> None:
-        self._prune(self._clock())
-        self._sessions.pop(token, None)
+        with self._lock:
+            self._prune(self._clock())
+            session = self._sessions.get(token)
+        if session is None:
+            return
+        with session._lock:
+            with self._lock:
+                self._prune(self._clock())
+                if self._sessions.get(token) is session:
+                    self._sessions.pop(token, None)
+
+    @contextmanager
+    def lease(self, token: str) -> Iterator[Session | None]:
+        """Serialize mutation of one live session without blocking other sessions."""
+
+        with self._lock:
+            self._prune(self._clock())
+            session = self._sessions.get(token)
+        if session is None:
+            yield None
+            return
+
+        session._lock.acquire()
+        active = False
+        try:
+            with self._lock:
+                now = self._clock()
+                self._prune(now)
+                if self._sessions.get(token) is session:
+                    session.touched_at = now
+                    session._active_leases += 1
+                    active = True
+            if not active:
+                yield None
+                return
+            yield session
+        finally:
+            if active:
+                with self._lock:
+                    session._active_leases -= 1
+                    if self._sessions.get(token) is session:
+                        session.touched_at = self._clock()
+            session._lock.release()
 
     def _prune(self, now: float) -> None:
         expired = [
             token
             for token, session in self._sessions.items()
-            if now - session.touched_at > self._idle_seconds
+            if session._active_leases == 0
+            and now - session.touched_at > self._idle_seconds
         ]
         for token in expired:
             self._sessions.pop(token, None)

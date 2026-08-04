@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict
+
 import pytest
 
 from app.sessions import SessionStore
@@ -92,6 +97,93 @@ def test_session_contains_only_live_server_state() -> None:
     session = store.get(token)
 
     assert session is not None
-    assert session.api_key == "key"
+    assert session.api_key_value() == "key"
     assert session.engine is engine
     assert session.latest_visualization is None
+
+
+def test_session_serializers_never_expose_raw_key() -> None:
+    raw_key = "nvapi-secret"
+    store = SessionStore(lambda: object())
+    session = store.get(store.create(raw_key))
+
+    assert session is not None
+    probes = (
+        repr(session),
+        repr(asdict(session)),
+        json.dumps(asdict(session), default=str),
+    )
+    assert all(raw_key not in probe for probe in probes)
+
+
+def test_concurrent_store_operations_do_not_corrupt_session_map() -> None:
+    store = SessionStore(lambda: object())
+
+    def exercise(index: int) -> None:
+        for iteration in range(100):
+            token = store.create(f"key-{index}-{iteration}")
+            assert store.get(token) is not None
+            if iteration % 2:
+                store.delete(token)
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        list(pool.map(exercise, range(24)))
+
+
+def test_same_session_leases_serialize_mutation() -> None:
+    store = SessionStore(lambda: object())
+    token = store.create("key")
+    active = 0
+    maximum_active = 0
+    counter_lock = threading.Lock()
+
+    def mutate() -> None:
+        nonlocal active, maximum_active
+        with store.lease(token) as session:
+            assert session is not None
+            with counter_lock:
+                active += 1
+                maximum_active = max(maximum_active, active)
+            threading.Event().wait(0.01)
+            with counter_lock:
+                active -= 1
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(lambda _: mutate(), range(16)))
+
+    assert maximum_active == 1
+
+
+def test_different_session_leases_overlap() -> None:
+    store = SessionStore(lambda: object())
+    tokens = [store.create("one"), store.create("two")]
+    rendezvous = threading.Barrier(2)
+
+    def lease(token: str) -> None:
+        with store.lease(token) as session:
+            assert session is not None
+            rendezvous.wait(timeout=1)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(lease, tokens))
+
+
+def test_global_store_lock_is_free_during_lease_body() -> None:
+    store = SessionStore(lambda: object())
+    token = store.create("one")
+    lease_started = threading.Event()
+    release_lease = threading.Event()
+
+    def hold_lease() -> None:
+        with store.lease(token) as session:
+            assert session is not None
+            lease_started.set()
+            assert release_lease.wait(timeout=1)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        future = pool.submit(hold_lease)
+        assert lease_started.wait(timeout=1)
+        other = pool.submit(store.create, "two")
+        assert other.result(timeout=0.5)
+        release_lease.set()
+        future.result(timeout=1)
