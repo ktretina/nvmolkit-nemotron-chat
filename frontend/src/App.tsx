@@ -145,36 +145,31 @@ export default function App() {
     }
   }
 
-  if (checkingSession) {
-    return <main className="session-loading" aria-busy="true"><p>Checking session…</p></main>;
-  }
-
-  if (!authenticated) {
-    return (
-      <main className="key-gate">
-        <form className="key-card" onSubmit={submitKey}>
-          <p className="eyebrow">nvMolKit + Nemotron</p>
-          <h1>Explore bundled molecular data</h1>
-          <p>Your key is held only in server memory for this ephemeral session. It is never stored in the browser.</p>
-          <label htmlFor="api-key">NVIDIA API key</label>
-          <input
-            id="api-key"
-            type="password"
-            autoComplete="off"
-            value={apiKey}
-            onChange={(event) => setApiKey(event.target.value)}
-            disabled={busy}
-          />
-          <button type="submit" disabled={busy || !apiKey.trim()}>{busy ? "Starting…" : "Start session"}</button>
-          {error && <p role="alert" className="error-message">{error}</p>}
-        </form>
-      </main>
-    );
-  }
-
   return (
-    <main className="app-shell">
-      <section className="chat-pane" aria-label="Molecular analysis chat">
+    <main className={checkingSession || !authenticated ? "session-shell" : "app-shell"}>
+      {checkingSession ? (
+        <section className="session-loading" aria-busy="true"><p>Checking session…</p></section>
+      ) : !authenticated ? (
+        <section className="key-gate">
+          <form className="key-card" onSubmit={submitKey}>
+            <p className="eyebrow">nvMolKit + Nemotron</p>
+            <h1>Explore bundled molecular data</h1>
+            <p>Your key is held only in server memory for this ephemeral session. It is never stored in the browser.</p>
+            <label htmlFor="api-key">NVIDIA API key</label>
+            <input
+              id="api-key"
+              type="password"
+              autoComplete="off"
+              value={apiKey}
+              onChange={(event) => setApiKey(event.target.value)}
+              disabled={busy}
+            />
+            <button type="submit" disabled={busy || !apiKey.trim()}>{busy ? "Starting…" : "Start session"}</button>
+            {error && <p role="alert" className="error-message">{error}</p>}
+          </form>
+        </section>
+      ) : (
+        <section className="chat-pane" aria-label="Molecular analysis chat">
         <header className="chat-header">
           <div><p className="eyebrow">nvMolKit</p><h1>Molecular explorer</h1></div>
           <button className="text-button" type="button" onClick={() => void logout()} disabled={busy}>Clear session</button>
@@ -238,9 +233,14 @@ export default function App() {
           <button type="submit" aria-label="Send message" disabled={busy || !message.trim()}>Send</button>
         </form>
         <p className="boundary-note">Research visualization only. Results use the bundled dataset and are not medical guidance.</p>
-      </section>
-      <section className="viewer-pane" aria-label="Scientific visualization">
-        {figureContext && (
+        </section>
+      )}
+      <section
+        className={`viewer-pane${checkingSession || !authenticated ? " persistent-viewer-hidden" : ""}`}
+        aria-label="Scientific visualization"
+        aria-hidden={checkingSession || !authenticated}
+      >
+        {authenticated && figureContext && (
           <header className="viewer-header">
             <p>Producing nvMolKit analysis function</p>
             <h2>{figureContext.functionName}</h2>
@@ -252,7 +252,9 @@ export default function App() {
             )}
           </header>
         )}
-        <div className="viewer-content"><AdaptiveViewer visualization={visualization} /></div>
+        <div className="viewer-content">
+          <AdaptiveViewer visualization={authenticated && !checkingSession ? visualization : null} />
+        </div>
       </section>
     </main>
   );

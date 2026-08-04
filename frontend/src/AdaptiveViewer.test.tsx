@@ -1,8 +1,10 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { StrictMode } from "react";
 
 import AdaptiveViewer from "./AdaptiveViewer";
 
-const { plotly, viewer } = vi.hoisted(() => ({
+const { createViewerMock, plotly, viewer } = vi.hoisted(() => ({
+  createViewerMock: vi.fn(),
   plotly: vi.fn(({ layout }: { layout: { title?: { text?: string } } }) => ({ layout })),
   viewer: {
     removeAllModels: vi.fn(),
@@ -20,15 +22,13 @@ vi.mock("react-plotly.js", async () => {
     default: (props: { layout: { title?: { text?: string } } }) => {
       plotly(props);
       return React.createElement("div", {
-        role: "img",
-        "aria-label": props.layout.title?.text ?? "Scientific graph",
         "data-testid": "plotly",
       });
     },
   };
 });
 
-vi.mock("3dmol", () => ({ createViewer: vi.fn(() => viewer) }));
+vi.mock("3dmol", () => ({ createViewer: createViewerMock }));
 
 const similarity = {
   kind: "similarity" as const,
@@ -87,6 +87,8 @@ const conformers = {
 };
 
 beforeEach(() => {
+  createViewerMock.mockReset();
+  createViewerMock.mockReturnValue(viewer);
   plotly.mockClear();
   Object.values(viewer).forEach((mock) => mock.mockClear());
 });
@@ -99,7 +101,10 @@ it("passes labeled axes to Plotly for a two-dimensional result", () => {
       yaxis: { title: { text: "Molecule index — bundled ChEMBL set" } },
     }),
   }));
-  expect(screen.queryByLabelText(/^conformer$/i)).not.toBeInTheDocument();
+  expect(screen.getByRole("figure", { name: /pairwise molecular similarity/i })).toHaveAccessibleDescription(
+    "X axis: Molecule index — bundled ChEMBL set. Y axis: Molecule index — bundled ChEMBL set.",
+  );
+  expect(screen.queryByRole("combobox", { name: /^conformer$/i })).not.toBeInTheDocument();
 });
 
 it("shows 3D controls and keeps the labeled energy graph for conformers", () => {
@@ -107,6 +112,9 @@ it("shows 3D controls and keeps the labeled energy graph for conformers", () => 
   expect(screen.getByLabelText(/molecule/i)).toHaveValue("CHEMBL1");
   expect(screen.getByLabelText(/^conformer$/i)).toHaveValue("CHEMBL1:0");
   expect(screen.getByLabelText(/rendering style/i)).toHaveValue("stick");
+  expect(screen.getByRole("group", { name: /3d molecular conformer/i })).toHaveAccessibleDescription(
+    /interactive molecular structure/i,
+  );
   expect(screen.getByText("C")).toBeInTheDocument();
   expect(screen.getByText("O")).toBeInTheDocument();
   const triad = screen.getByRole("img", { name: /xyz orientation triad/i });
@@ -122,6 +130,37 @@ it("shows 3D controls and keeps the labeled energy graph for conformers", () => 
   }));
 });
 
+it("reuses one page viewer across 3D to 2D to 3D transitions", () => {
+  const { rerender } = render(<AdaptiveViewer visualization={conformers} />);
+  expect(createViewerMock).toHaveBeenCalledTimes(1);
+  expect(viewer.addModel).toHaveBeenCalledTimes(1);
+
+  rerender(<AdaptiveViewer visualization={similarity} />);
+  expect(createViewerMock).toHaveBeenCalledTimes(1);
+  expect(viewer.clear).toHaveBeenCalled();
+
+  rerender(<AdaptiveViewer visualization={conformers} />);
+  expect(createViewerMock).toHaveBeenCalledTimes(1);
+  expect(viewer.addModel).toHaveBeenCalledTimes(2);
+});
+
+it("creates exactly one live viewer under React StrictMode", () => {
+  render(<StrictMode><AdaptiveViewer visualization={conformers} /></StrictMode>);
+  expect(createViewerMock).toHaveBeenCalledTimes(1);
+});
+
+it("clears the retained viewer for an empty or logged-out state", () => {
+  const { rerender } = render(<AdaptiveViewer visualization={conformers} />);
+  viewer.clear.mockClear();
+
+  rerender(<AdaptiveViewer visualization={null} />);
+
+  expect(createViewerMock).toHaveBeenCalledTimes(1);
+  expect(viewer.clear).toHaveBeenCalledTimes(1);
+  expect(viewer.render).toHaveBeenCalled();
+  expect(document.querySelector(".conformer-pane")).not.toBeVisible();
+});
+
 it("omits the orientation triad when the validated payload disables it", () => {
   render(<AdaptiveViewer visualization={{
     ...conformers,
@@ -134,7 +173,7 @@ it("replaces the 3D model when the conformer selection changes", () => {
   render(<AdaptiveViewer visualization={conformers} />);
   expect(viewer.addModel).toHaveBeenCalledTimes(1);
   fireEvent.change(screen.getByLabelText(/^conformer$/i), { target: { value: "CHEMBL1:1" } });
-  expect(viewer.removeAllModels).toHaveBeenCalledTimes(2);
+  expect(viewer.clear).toHaveBeenCalledTimes(2);
   expect(viewer.addModel).toHaveBeenCalledTimes(2);
   expect(viewer.addModel.mock.calls[1][0]).toContain("1.0000");
 });
@@ -144,5 +183,6 @@ it.each(["fingerprint_density", "similarity", "clusters"] as const)(
   (kind) => {
     render(<AdaptiveViewer visualization={{ ...similarity, kind }} />);
     expect(screen.getByTestId("plotly")).toBeInTheDocument();
+    expect(screen.getByRole("figure")).toBeInTheDocument();
   },
 );

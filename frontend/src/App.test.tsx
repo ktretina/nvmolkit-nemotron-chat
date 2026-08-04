@@ -2,13 +2,22 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import App from "./App";
 
-vi.mock("react-plotly.js", () => ({
-  default: ({ layout }: { layout: { title?: { text?: string } } }) => (
-    <div role="img" aria-label={layout.title?.text ?? "Scientific graph"} />
-  ),
+const { appCreateViewer, appViewer } = vi.hoisted(() => ({
+  appCreateViewer: vi.fn(),
+  appViewer: {
+    clear: vi.fn(),
+    addModel: vi.fn(),
+    setStyle: vi.fn(),
+    zoomTo: vi.fn(),
+    render: vi.fn(),
+  },
 }));
 
-vi.mock("3dmol", () => ({ createViewer: vi.fn() }));
+vi.mock("react-plotly.js", () => ({
+  default: () => <div data-testid="plotly" />,
+}));
+
+vi.mock("3dmol", () => ({ createViewer: appCreateViewer }));
 
 const graph = {
   kind: "similarity",
@@ -19,6 +28,37 @@ const graph = {
     yaxis: { title: { text: "Molecule index — bundled ChEMBL set" } },
   },
   interpretation: "The bundled set contains one self-match.",
+  interpretation_unavailable: false,
+} as const;
+
+const conformerGraph = {
+  kind: "conformers",
+  energy_plot: {
+    kind: "plotly",
+    data: [{ type: "scatter", x: ["CHEMBL1:0"], y: [0] }],
+    layout: {
+      title: { text: "Sampled conformer energies" },
+      xaxis: { title: { text: "Conformer ID" } },
+      yaxis: { title: { text: "Relative MMFF94 energy (kcal/mol)" } },
+    },
+  },
+  viewer: {
+    kind: "3dmol",
+    atom_legend: true,
+    xyz_triad: true,
+    structures: [{
+      molecule_id: "CHEMBL1",
+      conformer_id: "CHEMBL1:0",
+      conformer_index: 0,
+      relative_energy_kcal_mol: 0,
+      atoms: [{ index: 0, element: "C" }],
+      bonds: [],
+      coordinates: [[0, 0, 0]],
+    }],
+  },
+  selectors: { molecule_ids: ["CHEMBL1"], conformer_ids_by_molecule: { CHEMBL1: ["CHEMBL1:0"] } },
+  identities: [{ molecule_id: "CHEMBL1", conformer_id: "CHEMBL1:0", conformer_index: 0 }],
+  interpretation: "One conformer is available.",
   interpretation_unavailable: false,
 } as const;
 
@@ -40,6 +80,12 @@ function mockFetch(...responses: Response[]) {
     return next;
   });
 }
+
+beforeEach(() => {
+  appCreateViewer.mockReset();
+  appCreateViewer.mockReturnValue(appViewer);
+  Object.values(appViewer).forEach((mock) => mock.mockClear());
+});
 
 it("requires a masked key before showing chat", async () => {
   mockFetch(response({ authenticated: false, visualization: null }));
@@ -127,12 +173,12 @@ it("keeps the latest figure visible when a later request fails", async () => {
   );
   render(<App />);
   fireEvent.click(await screen.findByRole("button", { name: exactPrompts[1] }));
-  expect(await screen.findByRole("img", { name: /pairwise molecular similarity/i })).toBeInTheDocument();
+  expect(await screen.findByRole("figure", { name: /pairwise molecular similarity/i })).toBeInTheDocument();
   fireEvent.click(screen.getByText(/validated analyses/i));
   fireEvent.click(screen.getByRole("button", { name: exactPrompts[2] }));
 
   expect(await screen.findByRole("alert")).toHaveTextContent(/chemistry runtime is unavailable/i);
-  expect(screen.getByRole("img", { name: /pairwise molecular similarity/i })).toBeInTheDocument();
+  expect(screen.getByRole("figure", { name: /pairwise molecular similarity/i })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "analyze_similarity_map" })).toBeInTheDocument();
   expect(screen.getByText(/retained from the earlier successful request/i)).toHaveTextContent(exactPrompts[1]);
   expect(screen.getByText(/latest request failed/i)).toHaveTextContent(exactPrompts[2]);
@@ -151,6 +197,29 @@ it("clears the ephemeral session on logout", async () => {
     "/api/session",
     expect.objectContaining({ method: "DELETE", credentials: "same-origin" }),
   );
+});
+
+it("retains one 3D viewer through logout and reauthentication", async () => {
+  mockFetch(
+    response({ authenticated: true, visualization: conformerGraph }),
+    response({ authenticated: false }),
+    response({ authenticated: true }),
+    response({ visualization: conformerGraph }),
+  );
+  render(<App />);
+  await screen.findByRole("group", { name: /3d molecular conformer/i });
+  expect(appCreateViewer).toHaveBeenCalledTimes(1);
+
+  fireEvent.click(screen.getByRole("button", { name: /clear session/i }));
+  const key = await screen.findByLabelText(/nvidia api key/i);
+  expect(appViewer.clear).toHaveBeenCalled();
+  fireEvent.change(key, { target: { value: "nvapi-new-session" } });
+  fireEvent.click(screen.getByRole("button", { name: /start session/i }));
+  fireEvent.click(await screen.findByRole("button", { name: exactPrompts[3] }));
+  await screen.findByText(/one conformer is available/i);
+
+  expect(appCreateViewer).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(appViewer.addModel).toHaveBeenCalledTimes(2));
 });
 
 it("exposes accessible status and responsive layout hooks", async () => {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createViewer, type GLViewer } from "3dmol";
 import Plot from "react-plotly.js";
 import type { Data, Layout } from "plotly.js";
@@ -26,8 +26,16 @@ const ELEMENT_COLORS: Record<string, string> = {
 };
 
 function ScientificPlot({ graph }: { graph: PlotlyGraph }) {
+  const titleId = useId();
+  const descriptionId = useId();
   return (
-    <div className="plot-frame" aria-label={`${graph.layout.title.text} plot`}>
+    <figure className="plot-frame" aria-labelledby={titleId} aria-describedby={descriptionId}>
+      <figcaption className="sr-only">
+        <span id={titleId}>{graph.layout.title.text}</span>
+        <span id={descriptionId}>
+          X axis: {graph.layout.xaxis.title.text}. Y axis: {graph.layout.yaxis.title.text}.
+        </span>
+      </figcaption>
       <Plot
         data={graph.data as Data[]}
         layout={{
@@ -42,7 +50,7 @@ function ScientificPlot({ graph }: { graph: PlotlyGraph }) {
         useResizeHandler
         style={{ width: "100%", height: "100%" }}
       />
-    </div>
+    </figure>
   );
 }
 
@@ -74,60 +82,69 @@ function styleSpec(style: RenderingStyle): Record<string, unknown> {
   return { stick: { colorscheme: "Jmol", radius: 0.16 } };
 }
 
-function ConformerPane({ visualization }: { visualization: ConformerVisualization }) {
-  const firstMolecule = visualization.selectors.molecule_ids[0] ?? "";
+function PersistentConformerPane({ visualization }: { visualization: ConformerVisualization | null }) {
+  const hasVisualization = visualization !== null;
+  const firstMolecule = visualization?.selectors.molecule_ids[0] ?? "";
   const [moleculeId, setMoleculeId] = useState(firstMolecule);
-  const availableConformers = visualization.selectors.conformer_ids_by_molecule[moleculeId] ?? [];
+  const availableConformers = visualization?.selectors.conformer_ids_by_molecule[moleculeId] ?? [];
   const [conformerId, setConformerId] = useState(availableConformers[0] ?? "");
   const [renderingStyle, setRenderingStyle] = useState<RenderingStyle>("stick");
-  const canvasRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<GLViewer | null>(null);
+  const titleId = useId();
+  const descriptionId = useId();
 
   useEffect(() => {
     setMoleculeId(firstMolecule);
-    setConformerId(visualization.selectors.conformer_ids_by_molecule[firstMolecule]?.[0] ?? "");
+    setConformerId(visualization?.selectors.conformer_ids_by_molecule[firstMolecule]?.[0] ?? "");
   }, [firstMolecule, visualization]);
 
-  useEffect(() => {
-    if (canvasRef.current && !viewerRef.current) {
-      viewerRef.current = createViewer(canvasRef.current, { backgroundColor: "#090d13" });
+  const attachViewerHost = useCallback((node: HTMLDivElement | null) => {
+    if (node && visualization && !viewerRef.current) {
+      viewerRef.current = createViewer(node, { backgroundColor: "#090d13" });
     }
-    const viewer = viewerRef.current;
-    return () => {
-      viewer?.clear();
-      viewerRef.current = null;
-    };
-  }, []);
+  }, [hasVisualization]); // Attach lazily on the first 3D payload; retain thereafter.
 
   const selected = useMemo(
-    () => visualization.viewer.structures.find((item) => item.conformer_id === conformerId),
-    [conformerId, visualization.viewer.structures],
+    () => visualization?.viewer.structures.find((item) => item.conformer_id === conformerId),
+    [conformerId, visualization?.viewer.structures],
   );
 
   useEffect(() => {
     const viewer = viewerRef.current;
-    if (!viewer || !selected) return;
-    viewer.removeAllModels();
-    viewer.addModel(molBlock(selected), "mol");
-    viewer.setStyle({}, styleSpec(renderingStyle));
-    viewer.zoomTo();
+    if (!viewer) return;
+    viewer.clear();
+    if (selected) {
+      viewer.addModel(molBlock(selected), "mol");
+      viewer.setStyle({}, styleSpec(renderingStyle));
+      viewer.zoomTo();
+    }
     viewer.render();
-  }, [renderingStyle, selected]);
+  }, [renderingStyle, selected, visualization]);
 
   const elements = Array.from(new Set(selected?.atoms.map((atom) => atom.element) ?? []));
 
   function chooseMolecule(value: string) {
     setMoleculeId(value);
-    setConformerId(visualization.selectors.conformer_ids_by_molecule[value]?.[0] ?? "");
+    setConformerId(visualization?.selectors.conformer_ids_by_molecule[value]?.[0] ?? "");
   }
 
   return (
-    <div className="conformer-pane">
+    <section
+      className="conformer-pane"
+      hidden={!visualization}
+      role="group"
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
+    >
+      <h2 id={titleId} className="sr-only">3D molecular conformer</h2>
+      <p id={descriptionId} className="sr-only">
+        Interactive molecular structure with molecule, conformer, and rendering-style controls.
+      </p>
       <div className="viewer-controls">
         <label>
           Molecule
           <select value={moleculeId} onChange={(event) => chooseMolecule(event.target.value)}>
-            {visualization.selectors.molecule_ids.map((id) => <option key={id}>{id}</option>)}
+            {visualization?.selectors.molecule_ids.map((id) => <option key={id}>{id}</option>)}
           </select>
         </label>
         <label>
@@ -146,8 +163,8 @@ function ConformerPane({ visualization }: { visualization: ConformerVisualizatio
         </label>
       </div>
       <div className="molecule-stage">
-        <div className="molecule-canvas" ref={canvasRef} aria-label="Interactive 3D molecular conformer" />
-        {visualization.viewer.xyz_triad && (
+        <div className="molecule-canvas" ref={attachViewerHost} aria-label="Interactive 3D molecular conformer" />
+        {visualization?.viewer.xyz_triad && (
           <div className="xyz-triad" role="img" aria-label="XYZ orientation triad">
             <span className="axis-x" aria-label="X axis">X</span>
             <span className="axis-y" aria-label="Y axis">Y</span>
@@ -155,30 +172,32 @@ function ConformerPane({ visualization }: { visualization: ConformerVisualizatio
           </div>
         )}
       </div>
-      {visualization.viewer.atom_legend && (
+      {visualization?.viewer.atom_legend && (
         <div className="atom-legend" aria-label="Atom color legend">
           {elements.map((element) => (
             <span key={element}><i style={{ background: ELEMENT_COLORS[element] ?? "#aeb5be" }} />{element}</span>
           ))}
         </div>
       )}
-      <ScientificPlot graph={visualization.energy_plot} />
-    </div>
+      {visualization && <ScientificPlot graph={visualization.energy_plot} />}
+    </section>
   );
 }
 
 export default function AdaptiveViewer({ visualization }: { visualization: Visualization | null }) {
-  if (!visualization) {
-    return (
+  const conformers = visualization?.kind === "conformers" ? visualization : null;
+  const graph = visualization && visualization.kind !== "conformers" ? visualization : null;
+  return (
+    <div className="adaptive-viewer">
+      <PersistentConformerPane visualization={conformers} />
+      {!visualization && (
       <div className="viewer-empty">
         <span aria-hidden="true">◈</span>
         <h2>Scientific viewer</h2>
         <p>Your latest bundled-data analysis will appear here.</p>
       </div>
-    );
-  }
-  if (visualization.kind === "conformers") {
-    return <ConformerPane visualization={visualization} />;
-  }
-  return <ScientificPlot graph={visualization} />;
+      )}
+      {graph && <ScientificPlot graph={graph} />}
+    </div>
+  );
 }
