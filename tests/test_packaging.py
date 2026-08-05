@@ -16,6 +16,12 @@ import yaml  # type: ignore[import-untyped]
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLISH_IMAGE_WORKFLOW = ROOT / ".github" / "workflows" / "publish-image.yml"
+APPROVED_PUBLISH_ACTION_SHAS = {
+    "actions/checkout": "3d3c42e5aac5ba805825da76410c181273ba90b1",
+    "docker/login-action": "dbcb813823bdd20940b903addbd779551569679f",
+    "docker/setup-buildx-action": "bb05f3f5519dd87d3ba754cc423b652a5edd6d2c",
+    "docker/build-push-action": "53b7df96c91f9c12dcc8a07bcb9ccacbed38856a",
+}
 
 
 def _exact_pin(dependencies: list[str], package: str) -> str:
@@ -61,73 +67,158 @@ def test_safe_yaml_parser_is_pinned_as_a_test_dependency() -> None:
     assert _exact_pin(test_dependencies, "pyyaml") == "6.0.3"
 
 
-def _load_publish_image_workflow() -> tuple[str, dict[str, Any]]:
-    source = PUBLISH_IMAGE_WORKFLOW.read_text()
+def _load_publish_image_workflow(source: str) -> dict[str, Any]:
     workflow = yaml.safe_load(source)
     assert isinstance(workflow, dict), "the image workflow must be a mapping"
-    return source, workflow
+    return workflow
 
 
-def test_publish_image_workflow_has_manual_trigger_and_minimal_permissions() -> None:
-    _, workflow = _load_publish_image_workflow()
+def _assert_publish_image_workflow(source: str) -> None:
+    workflow = _load_publish_image_workflow(source)
     # PyYAML 6 follows YAML 1.1 and resolves an unquoted `on` key as True.
     triggers = workflow.get("on", workflow.get(True))
 
+    assert set(workflow) == {"name", True, "permissions", "jobs"}
+    assert workflow["name"] == "Publish container image"
     assert triggers == {"workflow_dispatch": None}
     assert workflow.get("permissions") == {
         "contents": "read",
         "packages": "write",
     }
     assert set(workflow.get("jobs", {})) == {"publish"}
-
-
-def test_publish_image_workflow_pushes_only_commit_tagged_linux_amd64_image() -> None:
-    source, workflow = _load_publish_image_workflow()
     publish = workflow["jobs"]["publish"]
     steps = publish["steps"]
 
+    assert set(publish) == {"runs-on", "outputs", "steps"}
     assert publish.get("runs-on") == "ubuntu-latest"
-    assert "permissions" not in publish
     assert publish.get("outputs") == {
         "digest": "${{ steps.build.outputs.digest }}"
     }
-    assert [step["uses"].partition("@")[0] for step in steps if "uses" in step] == [
-        "actions/checkout",
-        "docker/login-action",
-        "docker/setup-buildx-action",
-        "docker/build-push-action",
-    ]
-    assert all(
-        re.fullmatch(r"[^@]+@[0-9a-f]{40}", step["uses"])
-        for step in steps
-        if "uses" in step
-    ), "third-party actions must be pinned to full commit SHAs"
 
-    login = next(
-        step for step in steps if step.get("uses", "").startswith("docker/login-action@")
+    secret_matches = re.findall(
+        r"secrets(?:\.([A-Za-z_][A-Za-z0-9_]*)|"
+        r"\[\s*['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]\s*\])",
+        source,
     )
-    assert login["with"] == {
-        "registry": "ghcr.io",
-        "username": "${{ github.actor }}",
-        "password": "${{ secrets.GITHUB_TOKEN }}",
-    }
+    secret_references = {dot or bracket for dot, bracket in secret_matches}
+    assert secret_references == {"GITHUB_TOKEN"}, (
+        "only GITHUB_TOKEN may be referenced"
+    )
 
-    build = next(step for step in steps if step.get("id") == "build")
-    assert build["with"] == {
-        "context": ".",
-        "file": "./deployment/Dockerfile",
-        "platforms": "linux/amd64",
-        "push": True,
-        "tags": "ghcr.io/ktretina/nvmolkit-nemotron-chat:${{ github.sha }}",
+    action_uses = {
+        action: f"{action}@{sha}"
+        for action, sha in APPROVED_PUBLISH_ACTION_SHAS.items()
     }
-    assert "steps.build.outputs.digest" in source
-    assert "GITHUB_STEP_SUMMARY" in source
+    assert all(
+        re.fullmatch(r"[0-9a-f]{40}", sha)
+        for sha in APPROVED_PUBLISH_ACTION_SHAS.values()
+    )
+    expected_steps = [
+        {
+            "name": "Check out repository",
+            "uses": action_uses["actions/checkout"],
+            "with": {"persist-credentials": False},
+        },
+        {
+            "name": "Log in to GHCR",
+            "uses": action_uses["docker/login-action"],
+            "with": {
+                "registry": "ghcr.io",
+                "username": "${{ github.actor }}",
+                "password": "${{ secrets.GITHUB_TOKEN }}",
+            },
+        },
+        {
+            "name": "Set up Docker Buildx",
+            "uses": action_uses["docker/setup-buildx-action"],
+        },
+        {
+            "name": "Build and push image",
+            "id": "build",
+            "uses": action_uses["docker/build-push-action"],
+            "with": {
+                "context": ".",
+                "file": "./deployment/Dockerfile",
+                "platforms": "linux/amd64",
+                "push": True,
+                "tags": "ghcr.io/ktretina/nvmolkit-nemotron-chat:${{ github.sha }}",
+            },
+        },
+        {
+            "name": "Report immutable image reference",
+            "env": {
+                "IMAGE": "ghcr.io/ktretina/nvmolkit-nemotron-chat",
+                "DIGEST": "${{ steps.build.outputs.digest }}",
+            },
+            "run": 'echo "Image: ${IMAGE}@${DIGEST}" >> "$GITHUB_STEP_SUMMARY"',
+        },
+    ]
+    assert steps == expected_steps, (
+        "steps must match the ordered workflow step contract"
+    )
+
     assert ":latest" not in source
     assert "NVIDIA_API_KEY" not in source
     assert "brev" not in source.lower()
 
-    secret_references = set(re.findall(r"secrets\.([A-Za-z0-9_]+)", source))
-    assert secret_references == {"GITHUB_TOKEN"}
+
+def _replace_workflow_once(source: str, old: str, new: str) -> str:
+    assert source.count(old) == 1, f"expected one workflow fragment: {old!r}"
+    return source.replace(old, new, 1)
+
+
+def test_publish_image_workflow_matches_secure_publication_contract() -> None:
+    _assert_publish_image_workflow(PUBLISH_IMAGE_WORKFLOW.read_text())
+
+
+def test_publish_image_validator_rejects_extra_mutable_tag_push_step() -> None:
+    source = _replace_workflow_once(
+        PUBLISH_IMAGE_WORKFLOW.read_text(),
+        "      - name: Report immutable image reference\n",
+        """      - name: Push mutable candidate tag
+        run: docker push ghcr.io/ktretina/nvmolkit-nemotron-chat:candidate
+
+      - name: Report immutable image reference
+""",
+    )
+
+    with pytest.raises(AssertionError, match="ordered workflow step contract"):
+        _assert_publish_image_workflow(source)
+
+
+def test_publish_image_validator_rejects_changed_action_sha() -> None:
+    source = _replace_workflow_once(
+        PUBLISH_IMAGE_WORKFLOW.read_text(),
+        "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+        "actions/checkout@0000000000000000000000000000000000000000",
+    )
+
+    with pytest.raises(AssertionError, match="ordered workflow step contract"):
+        _assert_publish_image_workflow(source)
+
+
+def test_publish_image_validator_rejects_altered_digest_report() -> None:
+    source = _replace_workflow_once(
+        PUBLISH_IMAGE_WORKFLOW.read_text(),
+        'echo "Image: ${IMAGE}@${DIGEST}" >> "$GITHUB_STEP_SUMMARY"',
+        'echo "Digest unavailable" >> "$GITHUB_STEP_SUMMARY"',
+    )
+
+    with pytest.raises(AssertionError, match="ordered workflow step contract"):
+        _assert_publish_image_workflow(source)
+
+
+def test_publish_image_validator_rejects_alternate_secret_syntax() -> None:
+    source = _replace_workflow_once(
+        PUBLISH_IMAGE_WORKFLOW.read_text(),
+        "          persist-credentials: false\n",
+        """          persist-credentials: false
+          token: ${{ secrets['PACKAGE_TOKEN'] }}
+""",
+    )
+
+    with pytest.raises(AssertionError, match="only GITHUB_TOKEN"):
+        _assert_publish_image_workflow(source)
 
 
 def test_deployment_docs_preserve_repository_context_and_architecture_limits() -> None:
