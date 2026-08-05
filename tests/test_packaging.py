@@ -156,7 +156,7 @@ def _shell_segments(command: str) -> list[list[str]]:
 def _assert_runtime_apt_contract(source: str) -> None:
     runtime_runs = _runtime_run_commands(source)
     apt_install = re.compile(
-        r"(?<![\w-])(?:apt-get|apt)\s+(?:--?\S+\s+)*install\b"
+        r"(?<![\w-])(?:apt-get|apt)\b[^;&|]*?\binstall\b"
     )
     occurrence_count = sum(
         len(apt_install.findall(re.sub(r'''["'\[\],]''', " ", command)))
@@ -276,6 +276,8 @@ def test_runtime_apt_validator_rejects_wrapped_or_conditional_install(
     [
         "sh -c 'apt-get install -y make'",
         '["apt-get","install","-y","make"]',
+        "sh -c 'apt-get -o Dpkg::Use-Pty=0 install -y make'",
+        '["apt-get","-o","Dpkg::Use-Pty=0","install","-y","make"]',
     ],
 )
 def test_runtime_apt_validator_rejects_nested_or_json_install(
