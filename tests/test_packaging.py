@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-import copy
 import json
 import re
+import shutil
 import subprocess
 import tomllib
 from pathlib import Path
+from typing import Any
 
 import pytest
+import yaml  # type: ignore[import-untyped]
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -51,6 +53,13 @@ def test_nvmolkit_and_rdkit_distribution_pins_are_compatible() -> None:
     assert "/tmp/backend" in nvmolkit_install
 
 
+def test_safe_yaml_parser_is_pinned_as_a_test_dependency() -> None:
+    project = tomllib.loads((ROOT / "backend" / "pyproject.toml").read_text())
+    test_dependencies = project["project"]["optional-dependencies"]["test"]
+
+    assert _exact_pin(test_dependencies, "pyyaml") == "6.0.3"
+
+
 def test_deployment_docs_preserve_repository_context_and_architecture_limits() -> None:
     launchable = (ROOT / "deployment" / "launchable-fields.md").read_text()
     launchable_lower = launchable.lower()
@@ -65,7 +74,7 @@ def test_deployment_docs_preserve_repository_context_and_architecture_limits() -
     assert "emulation has not been tested" in readme
 
 
-def _valid_compose_config() -> dict[str, object]:
+def _valid_compose_config() -> dict[str, Any]:
     return {
         "services": {
             "app": {
@@ -87,7 +96,13 @@ def _valid_compose_config() -> dict[str, object]:
     }
 
 
-def _assert_brev_gpu_reservation(config: dict[str, object]) -> None:
+def _load_authored_compose(source: str) -> dict[str, Any]:
+    config = yaml.safe_load(source)
+    assert isinstance(config, dict), "the authored Compose file must be a mapping"
+    return config
+
+
+def _assert_brev_gpu_reservation(config: dict[str, Any]) -> None:
     services = config.get("services")
     assert isinstance(services, dict), "services must be a mapping"
 
@@ -125,7 +140,19 @@ def _assert_brev_gpu_reservation(config: dict[str, object]) -> None:
     )
 
 
-def test_compose_uses_one_brev_compatible_nvidia_gpu_reservation() -> None:
+def test_authored_compose_uses_one_brev_compatible_nvidia_gpu_reservation() -> None:
+    config = _load_authored_compose(
+        (ROOT / "deployment" / "compose.yaml").read_text()
+    )
+
+    _assert_brev_gpu_reservation(config)
+
+
+@pytest.mark.skipif(
+    shutil.which("docker") is None,
+    reason="Docker CLI is unavailable; normalized Compose compatibility not checked",
+)
+def test_docker_compose_accepts_and_preserves_gpu_reservation() -> None:
     result = subprocess.run(
         [
             "docker",
@@ -137,23 +164,49 @@ def test_compose_uses_one_brev_compatible_nvidia_gpu_reservation() -> None:
             "json",
         ],
         cwd=ROOT,
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
+        timeout=30,
     )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        unsupported_markers = (
+            "unknown flag: --format",
+            "unknown command \"compose\"",
+            "is not a docker command",
+        )
+        if any(marker in detail.lower() for marker in unsupported_markers):
+            pytest.skip(
+                "Docker Compose config --format json is unavailable: "
+                f"{detail or 'no diagnostic emitted'}"
+            )
+        pytest.fail(
+            "Docker Compose rejected deployment/compose.yaml: "
+            f"{detail or 'no diagnostic emitted'}"
+        )
 
-    _assert_brev_gpu_reservation(json.loads(result.stdout))
+    try:
+        config = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        pytest.fail(
+            "Docker Compose config --format json did not emit valid JSON: "
+            f"{error}"
+        )
+
+    assert isinstance(config, dict), "normalized Compose config must be a mapping"
+    _assert_brev_gpu_reservation(config)
 
 
 def test_gpu_validator_rejects_original_service_level_gpus() -> None:
-    config = {"services": {"app": {"gpus": "all"}}}
+    config: dict[str, Any] = {"services": {"app": {"gpus": "all"}}}
 
     with pytest.raises(AssertionError, match="services.app.gpus"):
         _assert_brev_gpu_reservation(config)
 
 
 def test_gpu_validator_rejects_missing_reservation() -> None:
-    config = {"services": {"app": {}}}
+    config: dict[str, Any] = {"services": {"app": {}}}
 
     with pytest.raises(AssertionError, match="services.app.deploy"):
         _assert_brev_gpu_reservation(config)
@@ -180,9 +233,40 @@ def test_gpu_validator_rejects_missing_gpu_capability() -> None:
 
 
 def test_gpu_validator_ignores_decoy_reservation_outside_app() -> None:
-    config = _valid_compose_config()
-    app = config["services"]["app"]
-    config["services"] = {"app": {}, "worker": copy.deepcopy(app)}
+    config = _load_authored_compose(
+        """services:
+  app: {}
+  worker:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+"""
+    )
 
     with pytest.raises(AssertionError, match="services.app.deploy"):
+        _assert_brev_gpu_reservation(config)
+
+
+@pytest.mark.parametrize("count_source", ['"1"', "${GPU_COUNT:-1}"])
+def test_authored_gpu_count_rejects_strings_and_interpolation(
+    count_source: str,
+) -> None:
+    config = _load_authored_compose(
+        f"""services:
+  app:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: {count_source}
+              capabilities: [gpu]
+"""
+    )
+
+    with pytest.raises(AssertionError, match="count must be the integer 1"):
         _assert_brev_gpu_reservation(config)
