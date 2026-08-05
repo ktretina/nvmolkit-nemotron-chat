@@ -36,6 +36,7 @@ APP_HEALTHCHECK = {
     "timeout": "5s",
     "retries": 12,
 }
+APP_ENVIRONMENT = {"TRITON_CACHE_DIR": "/tmp/triton-cache"}
 APPROVED_PUBLISH_ACTION_SHAS = {
     "actions/checkout": "3d3c42e5aac5ba805825da76410c181273ba90b1",
     "docker/login-action": "dbcb813823bdd20940b903addbd779551569679f",
@@ -445,6 +446,10 @@ def _assert_authored_compose_contract(config: dict[str, Any]) -> None:
     _assert_brev_gpu_reservation(config)
 
     app = services["app"]
+    assert app.get("environment") == APP_ENVIRONMENT, (
+        "services.app.environment must set only "
+        "TRITON_CACHE_DIR=/tmp/triton-cache"
+    )
     assert app.get("ports") == ["8000:8000"], (
         "services.app.ports must be exactly ['8000:8000']"
     )
@@ -471,6 +476,25 @@ def test_authored_contract_rejects_extra_build_backed_mutable_service() -> None:
     }
 
     with pytest.raises(AssertionError, match="exactly one service named app"):
+        _assert_authored_compose_contract(config)
+
+
+@pytest.mark.parametrize(
+    "environment",
+    [None, {"TRITON_CACHE_DIR": "/tmp/changed-triton-cache"}],
+)
+def test_authored_contract_rejects_missing_or_changed_triton_cache_dir(
+    environment: dict[str, str] | None,
+) -> None:
+    config = _load_authored_compose(
+        (ROOT / "deployment" / "compose.yaml").read_text()
+    )
+    if environment is None:
+        config["services"]["app"].pop("environment", None)
+    else:
+        config["services"]["app"]["environment"] = environment
+
+    with pytest.raises(AssertionError, match="TRITON_CACHE_DIR"):
         _assert_authored_compose_contract(config)
 
 
