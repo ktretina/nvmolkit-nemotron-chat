@@ -6,8 +6,8 @@ The application image is published, but Brev Console parsing and live qualificat
 - **Description:** A GPU molecular-analysis chat demo with four bounded nvMolKit workflows, hosted Nemotron interpretation, and labeled 2D/3D visuals over bundled data.
 - **Runtime mode:** Docker Compose.
 - **Public repository:** `https://github.com/ktretina/nvmolkit-nemotron-chat`.
-- **Image-build commit:** `0ac0fb00bc1fc49bc23982f1c2a0a2e51db53980` (`linux/amd64`).
-- **Application image:** `ghcr.io/ktretina/nvmolkit-nemotron-chat@sha256:0931542cde79aa9d64438c7b720aa80adacb8ab328ab585af5b3b717937f5afb`.
+- **Image-build commit:** `aec792aef589adf315ba37c60a3cf145a52c868c` (`linux/amd64`).
+- **Application image:** `ghcr.io/ktretina/nvmolkit-nemotron-chat@sha256:3dca44cd15b16526f9f02fcd8df0ea54d67032210ab6ddd49dcb98895bc6c3f2`.
 - **Compose source/resource:** In Brev Console, use the commit-pinned GitHub blob URL `https://github.com/ktretina/nvmolkit-nemotron-chat/blob/150f51a5a312df9221b1df0da662c8fc07915317/deployment/compose.yaml`. The Compose file is image-backed and requires no source-repository build context. Brev Console Compose parse is **PENDING**; this URL is not yet claimed accepted.
 - **Architecture:** Linux x86-64.
 - **Hardware:** One NVIDIA GPU with compute capability 7.0 or newer and a host driver that supports the CUDA 12.8 container runtime.

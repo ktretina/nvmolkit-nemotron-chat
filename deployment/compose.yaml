@@ -1,6 +1,6 @@
 services:
   app:
-    image: ghcr.io/ktretina/nvmolkit-nemotron-chat@sha256:0931542cde79aa9d64438c7b720aa80adacb8ab328ab585af5b3b717937f5afb
+    image: ghcr.io/ktretina/nvmolkit-nemotron-chat@sha256:3dca44cd15b16526f9f02fcd8df0ea54d67032210ab6ddd49dcb98895bc6c3f2
     ports:
       - "8000:8000"
     deploy:

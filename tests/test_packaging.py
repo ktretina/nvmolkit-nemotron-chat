@@ -17,11 +17,12 @@ import yaml  # type: ignore[import-untyped]
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLISH_IMAGE_WORKFLOW = ROOT / ".github" / "workflows" / "publish-image.yml"
-APP_IMAGE_BUILD_COMMIT = "0ac0fb00bc1fc49bc23982f1c2a0a2e51db53980"
+APP_IMAGE_BUILD_COMMIT = "aec792aef589adf315ba37c60a3cf145a52c868c"
+APP_IMAGE_BUILD_RUN = "31032058838"
 IMAGE_BACKED_COMPOSE_COMMIT = "150f51a5a312df9221b1df0da662c8fc07915317"
 APP_IMAGE = (
     "ghcr.io/ktretina/nvmolkit-nemotron-chat@"
-    "sha256:0931542cde79aa9d64438c7b720aa80adacb8ab328ab585af5b3b717937f5afb"
+    "sha256:3dca44cd15b16526f9f02fcd8df0ea54d67032210ab6ddd49dcb98895bc6c3f2"
 )
 APP_HEALTHCHECK = {
     "test": [
@@ -294,7 +295,7 @@ def test_deployment_docs_pin_image_source_and_preserve_architecture_limits() -> 
     assert "Linux x86-64 target-GPU hosts only" in readme
     assert "ARM64 Macs are unsupported" in readme
     assert "emulation has not been tested" in readme
-    assert "31019738589" in readme
+    assert APP_IMAGE_BUILD_RUN in readme
     assert APP_IMAGE_BUILD_COMMIT in readme
     assert APP_IMAGE in readme
     assert "CI Linux/amd64 image build and push succeeded" in readme
@@ -371,7 +372,7 @@ def test_image_validator_rejects_build_context_with_decoy_pinned_image() -> None
         "ghcr.io/ktretina/nvmolkit-nemotron-chat:latest",
         f"ghcr.io/ktretina/nvmolkit-nemotron-chat:{APP_IMAGE_BUILD_COMMIT}",
         "ghcr.io/decoy/nvmolkit-nemotron-chat@"
-        "sha256:0931542cde79aa9d64438c7b720aa80adacb8ab328ab585af5b3b717937f5afb",
+        "sha256:3dca44cd15b16526f9f02fcd8df0ea54d67032210ab6ddd49dcb98895bc6c3f2",
         "ghcr.io/ktretina/nvmolkit-nemotron-chat@"
         "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     ],
