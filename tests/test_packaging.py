@@ -18,12 +18,25 @@ import yaml  # type: ignore[import-untyped]
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLISH_IMAGE_WORKFLOW = ROOT / ".github" / "workflows" / "publish-image.yml"
-APP_IMAGE_BUILD_COMMIT = "aec792aef589adf315ba37c60a3cf145a52c868c"
-APP_IMAGE_BUILD_RUN = "31032058838"
+APP_IMAGE_BUILD_COMMIT = "572241e9bc9cf49f2614f8ef5a2566f54b831645"
+APP_IMAGE_BUILD_RUN = "31048410625"
 IMAGE_BACKED_COMPOSE_COMMIT = "e6130081d421b421e553223375a130b2365d08ab"
 APP_IMAGE = (
     "ghcr.io/ktretina/nvmolkit-nemotron-chat@"
-    "sha256:3dca44cd15b16526f9f02fcd8df0ea54d67032210ab6ddd49dcb98895bc6c3f2"
+    "sha256:10c8297827ed96bce8f413986cec13e77b2b266555527c1f21e425082d0fec88"
+)
+APP_AMD64_MANIFEST = (
+    "sha256:a3e69c03c8eda6ee3d5dbc92af4284b46ab671ecb915fa3d744ccd79a475c61e"
+)
+APP_AMD64_COMPRESSED_BYTES = "4,201,741,858 bytes"
+APP_AMD64_COMPRESSED_GIB = "3.9131770451 GiB"
+STALE_IMAGE_EVIDENCE = (
+    "31032058838",
+    "aec792aef589adf315ba37c60a3cf145a52c868c",
+    "sha256:3dca44cd15b16526f9f02fcd8df0ea54d67032210ab6ddd49dcb98895bc6c3f2",
+    "sha256:546de4b2d8394af9cc6275181f7f5a521ada4592401145f8ec656bf63c687f30",
+    "4,135,274,607 bytes",
+    "3.8512745937 GiB",
 )
 APP_HEALTHCHECK = {
     "test": [
@@ -483,15 +496,20 @@ def test_deployment_docs_pin_image_source_and_preserve_architecture_limits() -> 
     launchable = (ROOT / "deployment" / "launchable-fields.md").read_text()
     launchable_lower = launchable.lower()
     assert APP_IMAGE_BUILD_COMMIT in launchable
+    assert APP_IMAGE_BUILD_RUN in launchable
     assert APP_IMAGE in launchable
+    assert APP_AMD64_MANIFEST in launchable
+    assert APP_AMD64_COMPRESSED_BYTES in launchable
+    assert APP_AMD64_COMPRESSED_GIB in launchable
     assert (
         f"https://github.com/ktretina/nvmolkit-nemotron-chat/blob/"
         f"{IMAGE_BACKED_COMPOSE_COMMIT}/deployment/compose.yaml"
     ) in launchable
     assert "repository-root build context" not in launchable_lower
-    assert "console compose parse" in launchable_lower
     assert "pending" in launchable_lower
     assert "unqualified" in launchable_lower
+    assert "immutable deployment" in launchable_lower
+    assert "gpu acceptance" in launchable_lower
 
     readme = (ROOT / "README.md").read_text()
     assert "Linux x86-64 target-GPU hosts only" in readme
@@ -500,10 +518,18 @@ def test_deployment_docs_pin_image_source_and_preserve_architecture_limits() -> 
     assert APP_IMAGE_BUILD_RUN in readme
     assert APP_IMAGE_BUILD_COMMIT in readme
     assert APP_IMAGE in readme
+    assert APP_AMD64_MANIFEST in readme
+    assert APP_AMD64_COMPRESSED_BYTES in readme
+    assert APP_AMD64_COMPRESSED_GIB in readme
     assert "CI Linux/amd64 image build and push succeeded" in readme
     assert "The Docker build" not in readme
-    assert "container execution and history scan remain pending" in readme
-    assert "Brev Console and Secure Link acceptance remain unqualified" in readme
+    assert "immutable deployment" in readme.lower()
+    assert "GPU acceptance" in readme
+    assert "pending" in readme.lower()
+
+    for stale_value in STALE_IMAGE_EVIDENCE:
+        assert stale_value not in launchable
+        assert stale_value not in readme
 
 
 def _valid_compose_config() -> dict[str, Any]:
@@ -574,7 +600,7 @@ def test_image_validator_rejects_build_context_with_decoy_pinned_image() -> None
         "ghcr.io/ktretina/nvmolkit-nemotron-chat:latest",
         f"ghcr.io/ktretina/nvmolkit-nemotron-chat:{APP_IMAGE_BUILD_COMMIT}",
         "ghcr.io/decoy/nvmolkit-nemotron-chat@"
-        "sha256:3dca44cd15b16526f9f02fcd8df0ea54d67032210ab6ddd49dcb98895bc6c3f2",
+        "sha256:10c8297827ed96bce8f413986cec13e77b2b266555527c1f21e425082d0fec88",
         "ghcr.io/ktretina/nvmolkit-nemotron-chat@"
         "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     ],
