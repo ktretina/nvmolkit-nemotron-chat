@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PUBLISH_IMAGE_WORKFLOW = ROOT / ".github" / "workflows" / "publish-image.yml"
 APP_IMAGE_BUILD_COMMIT = "572241e9bc9cf49f2614f8ef5a2566f54b831645"
 APP_IMAGE_BUILD_RUN = "31048410625"
-IMAGE_BACKED_COMPOSE_COMMIT = "e6130081d421b421e553223375a130b2365d08ab"
+IMAGE_BACKED_COMPOSE_COMMIT = "6d05a76c93ea22aa62fcfc92af61b1421e02a1d7"
 APP_IMAGE = (
     "ghcr.io/ktretina/nvmolkit-nemotron-chat@"
     "sha256:10c8297827ed96bce8f413986cec13e77b2b266555527c1f21e425082d0fec88"

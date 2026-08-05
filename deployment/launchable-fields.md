@@ -10,7 +10,7 @@ The compiler-equipped application image is published, but its immutable deployme
 - **Image-build commit:** `572241e9bc9cf49f2614f8ef5a2566f54b831645` (`linux/amd64`).
 - **Application image:** `ghcr.io/ktretina/nvmolkit-nemotron-chat@sha256:10c8297827ed96bce8f413986cec13e77b2b266555527c1f21e425082d0fec88`.
 - **Linux/amd64 manifest:** `sha256:a3e69c03c8eda6ee3d5dbc92af4284b46ab671ecb915fa3d744ccd79a475c61e`; compressed layer payload: 4,201,741,858 bytes (3.9131770451 GiB).
-- **Compose source/resource:** In Brev Console, use the commit-pinned GitHub blob URL `https://github.com/ktretina/nvmolkit-nemotron-chat/blob/e6130081d421b421e553223375a130b2365d08ab/deployment/compose.yaml`. The Compose file is image-backed and requires no source-repository build context. The controller must replace this URL with the immutable Phase A commit before deployment.
+- **Compose source/resource:** In Brev Console, use the immutable Phase A GitHub blob URL `https://github.com/ktretina/nvmolkit-nemotron-chat/blob/6d05a76c93ea22aa62fcfc92af61b1421e02a1d7/deployment/compose.yaml`. The Compose file is image-backed and requires no source-repository build context.
 - **Architecture:** Linux x86-64.
 - **Hardware:** One NVIDIA GPU with compute capability 7.0 or newer and a host driver that supports the CUDA 12.8 container runtime.
 - **Disk:** 50 GiB.
