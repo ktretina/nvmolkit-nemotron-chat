@@ -71,7 +71,8 @@ def test_nvmolkit_and_rdkit_distribution_pins_are_compatible() -> None:
     nvmolkit_install = next(
         command
         for command in re.findall(
-            r"python -m pip install\b.*?(?=\s+&&|$)", flattened
+            r'"\$VIRTUAL_ENV/bin/python" -m pip install\b.*?(?=\s+&&|$)',
+            flattened,
         )
         if "nvmolkit==" in command
     )
@@ -90,6 +91,13 @@ def test_runtime_uses_slim_python_base_with_cuda_wheel_dependencies() -> None:
     assert "nvmolkit==0.5.0" in dockerfile
     assert "--extra-index-url https://download.pytorch.org/whl/cu128" in dockerfile
     assert "--no-deps" not in dockerfile
+    pip_interpreters = re.findall(
+        r"&&\s+([^\s]+)\s+-m pip install", dockerfile
+    )
+    assert pip_interpreters == [
+        '"$VIRTUAL_ENV/bin/python"',
+        '"$VIRTUAL_ENV/bin/python"',
+    ]
 
 
 def test_safe_yaml_parser_is_pinned_as_a_test_dependency() -> None:

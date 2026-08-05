@@ -27,8 +27,8 @@ RUN apt-get update \
 
 COPY backend/ /tmp/backend/
 RUN python -m venv "$VIRTUAL_ENV" \
-    && python -m pip install --no-cache-dir --upgrade pip \
-    && python -m pip install --no-cache-dir \
+    && "$VIRTUAL_ENV/bin/python" -m pip install --no-cache-dir --upgrade pip \
+    && "$VIRTUAL_ENV/bin/python" -m pip install --no-cache-dir \
         --extra-index-url https://download.pytorch.org/whl/cu128 \
         torch==2.7.1+cu128 \
         nvmolkit==0.5.0 \
