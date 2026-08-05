@@ -103,19 +103,129 @@ def test_runtime_uses_slim_python_base_with_cuda_wheel_dependencies() -> None:
     ]
 
 
-def test_runtime_installs_only_required_triton_compiler_packages() -> None:
-    dockerfile = (ROOT / "deployment" / "Dockerfile").read_text()
-    flattened = dockerfile.replace("\\\n", " ")
-    package_lists = re.findall(
-        r"apt-get install\s+--yes\s+--no-install-recommends\s+"
-        r"(.+?)(?=\s+&&)",
-        flattened,
-    )
+def _logical_dockerfile_instructions(source: str) -> list[str]:
+    instructions: list[str] = []
+    continued: list[str] = []
+    for line in source.splitlines():
+        stripped = line.strip()
+        if not continued and (not stripped or stripped.startswith("#")):
+            continue
+        if stripped.endswith("\\"):
+            continued.append(stripped[:-1].rstrip())
+            continue
+        continued.append(stripped)
+        instructions.append(" ".join(continued))
+        continued = []
 
-    assert len(package_lists) == 1, "runtime must have one apt package install"
-    packages = set(shlex.split(package_lists[0]))
+    assert not continued, "Dockerfile must not end with a continued instruction"
+    return instructions
+
+
+def _runtime_run_commands(source: str) -> list[str]:
+    commands: list[str] = []
+    in_runtime = False
+    for instruction in _logical_dockerfile_instructions(source):
+        keyword, separator, argument = instruction.partition(" ")
+        if keyword.upper() == "FROM":
+            in_runtime = bool(
+                re.search(r"\bAS\s+runtime\s*$", argument, flags=re.IGNORECASE)
+            )
+        elif in_runtime and separator and keyword.upper() == "RUN":
+            commands.append(argument)
+    return commands
+
+
+def _shell_segments(command: str) -> list[list[str]]:
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|")
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    segments: list[list[str]] = []
+    current: list[str] = []
+    for token in lexer:
+        if token and set(token) <= set(";&|"):
+            if current:
+                segments.append(current)
+                current = []
+        else:
+            current.append(token)
+    if current:
+        segments.append(current)
+    return segments
+
+
+def _assert_runtime_apt_contract(source: str) -> None:
+    installs: list[tuple[str, list[str]]] = []
+    assignment = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
+    for run_command in _runtime_run_commands(source):
+        for segment in _shell_segments(run_command):
+            command_index = 0
+            while (
+                command_index < len(segment)
+                and assignment.fullmatch(segment[command_index])
+            ):
+                command_index += 1
+            if (
+                command_index >= len(segment)
+                or segment[command_index] not in {"apt", "apt-get"}
+            ):
+                continue
+            executable = segment[command_index]
+            arguments = segment[command_index + 1 :]
+            if "install" in arguments:
+                installs.append((executable, arguments))
+
+    assert len(installs) == 1, "runtime must execute exactly one apt-get install"
+    executable, arguments = installs[0]
+    assert executable == "apt-get"
+    install_index = arguments.index("install")
+    package_tokens = [
+        token for token in arguments[install_index + 1 :] if not token.startswith("-")
+    ]
+    assert "--no-install-recommends" in arguments
+    assert len(package_tokens) == 3
+    packages = set(package_tokens)
     assert packages == {"ca-certificates", "gcc", "libc6-dev"}
     assert packages.isdisjoint({"build-essential", "g++", "make"})
+
+
+def test_runtime_installs_only_required_triton_compiler_packages() -> None:
+    _assert_runtime_apt_contract(
+        (ROOT / "deployment" / "Dockerfile").read_text()
+    )
+
+
+def test_runtime_apt_validator_rejects_echo_decoy() -> None:
+    source = (ROOT / "deployment" / "Dockerfile").read_text()
+    run_start = source.index("RUN apt-get update")
+    run_end = source.index("\n\nCOPY backend/", run_start)
+    mutated = (
+        source[:run_start]
+        + "RUN echo apt-get install --yes --no-install-recommends "
+        "ca-certificates gcc libc6-dev && true"
+        + source[run_end:]
+    )
+
+    with pytest.raises(AssertionError):
+        _assert_runtime_apt_contract(mutated)
+
+
+@pytest.mark.parametrize(
+    "install_command",
+    [
+        "apt-get install -y make",
+        "apt-get -y install make",
+        "apt-get install --yes make",
+        "apt install -y make",
+    ],
+)
+def test_runtime_apt_validator_rejects_second_install(
+    install_command: str,
+) -> None:
+    source = (ROOT / "deployment" / "Dockerfile").read_text()
+    mutated = f"{source}\nRUN {install_command}\n"
+
+    with pytest.raises(AssertionError):
+        _assert_runtime_apt_contract(mutated)
 
 
 def test_safe_yaml_parser_is_pinned_as_a_test_dependency() -> None:
