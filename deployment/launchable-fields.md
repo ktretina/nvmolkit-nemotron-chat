@@ -21,4 +21,4 @@ The compiler-equipped application image is published, but its immutable deployme
 
 **Blocking acceptance gate:** The controller must deploy the exact digest-pinned image above from the Phase A Compose revision, then complete GPU acceptance without modifying the running container. Until that succeeds, immutable deployment and GPU acceptance are **PENDING** and the new artifact is **UNQUALIFIED**.
 
-The new immutable deployment and its Secure Link remain unqualified until that live acceptance run. Do not copy a credential into the repository, Compose file, Launchable defaults, logs, screenshots, or acceptance receipt.
+The new immutable deployment and its Secure Link remain unqualified until that live acceptance run. Hosted Nemotron qualification and browser/UI acceptance also remain **PENDING**. Do not copy a credential into the repository, Compose file, Launchable defaults, logs, screenshots, or acceptance receipt.

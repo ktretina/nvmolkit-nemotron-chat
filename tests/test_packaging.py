@@ -510,6 +510,14 @@ def test_deployment_docs_pin_image_source_and_preserve_architecture_limits() -> 
     assert "unqualified" in launchable_lower
     assert "immutable deployment" in launchable_lower
     assert "gpu acceptance" in launchable_lower
+    assert re.search(
+        r"hosted nemotron[^.\n]*\bpending\b",
+        launchable_lower,
+    ), "hosted Nemotron qualification must be explicitly pending"
+    assert re.search(
+        r"browser/ui acceptance[^.\n]*\bpending\b",
+        launchable_lower,
+    ), "browser/UI acceptance must be explicitly pending"
 
     readme = (ROOT / "README.md").read_text()
     assert "Linux x86-64 target-GPU hosts only" in readme
