@@ -58,3 +58,19 @@ def test_deployment_docs_preserve_repository_context_and_architecture_limits() -
     assert "Linux x86-64 target-GPU hosts only" in readme
     assert "ARM64 Macs are unsupported" in readme
     assert "emulation has not been tested" in readme
+
+
+def test_compose_uses_one_brev_compatible_nvidia_gpu_reservation() -> None:
+    compose = (ROOT / "deployment" / "compose.yaml").read_text()
+
+    assert re.search(r"(?m)^ {4}gpus:", compose) is None
+    reservation = """    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities:
+                - gpu"""
+    assert reservation in compose
+    assert compose.count("- driver: nvidia") == 1
