@@ -154,29 +154,33 @@ def _shell_segments(command: str) -> list[list[str]]:
 
 
 def _assert_runtime_apt_contract(source: str) -> None:
-    installs: list[tuple[str, list[str]]] = []
+    installs: list[tuple[list[list[str]], int, int]] = []
     assignment = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
     for run_command in _runtime_run_commands(source):
-        for segment in _shell_segments(run_command):
-            command_index = 0
-            while (
-                command_index < len(segment)
-                and assignment.fullmatch(segment[command_index])
-            ):
-                command_index += 1
-            if (
-                command_index >= len(segment)
-                or segment[command_index] not in {"apt", "apt-get"}
-            ):
-                continue
-            executable = segment[command_index]
-            arguments = segment[command_index + 1 :]
-            if "install" in arguments:
-                installs.append((executable, arguments))
+        segments = _shell_segments(run_command)
+        for segment_index, segment in enumerate(segments):
+            for index, token in enumerate(segment):
+                executable = token.rsplit("/", 1)[-1]
+                arguments = segment[index + 1 :]
+                if executable in {"apt", "apt-get"} and "install" in arguments:
+                    installs.append((segments, segment_index, index))
 
     assert len(installs) == 1, "runtime must execute exactly one apt-get install"
-    executable, arguments = installs[0]
-    assert executable == "apt-get"
+    segments, install_segment_index, install_command_index = installs[0]
+    assert len(segments) == 3
+    assert install_segment_index == 1
+    assert segments[0] == ["apt-get", "update"]
+    assert segments[2] == ["rm", "-rf", "/var/lib/apt/lists/*"]
+    segment = segments[install_segment_index]
+    direct_command_index = 0
+    while (
+        direct_command_index < len(segment)
+        and assignment.fullmatch(segment[direct_command_index])
+    ):
+        direct_command_index += 1
+    assert install_command_index == direct_command_index
+    assert segment[install_command_index] == "apt-get"
+    arguments = segment[install_command_index + 1 :]
     install_index = arguments.index("install")
     package_tokens = [
         token for token in arguments[install_index + 1 :] if not token.startswith("-")
@@ -194,16 +198,20 @@ def test_runtime_installs_only_required_triton_compiler_packages() -> None:
     )
 
 
-def test_runtime_apt_validator_rejects_echo_decoy() -> None:
+@pytest.mark.parametrize(
+    "decoy",
+    [
+        "echo apt-get install --yes --no-install-recommends "
+        "ca-certificates gcc libc6-dev && true",
+        'echo "apt-get install --yes --no-install-recommends '
+        'ca-certificates gcc libc6-dev" && true',
+    ],
+)
+def test_runtime_apt_validator_rejects_echo_decoy(decoy: str) -> None:
     source = (ROOT / "deployment" / "Dockerfile").read_text()
     run_start = source.index("RUN apt-get update")
     run_end = source.index("\n\nCOPY backend/", run_start)
-    mutated = (
-        source[:run_start]
-        + "RUN echo apt-get install --yes --no-install-recommends "
-        "ca-certificates gcc libc6-dev && true"
-        + source[run_end:]
-    )
+    mutated = source[:run_start] + f"RUN {decoy}" + source[run_end:]
 
     with pytest.raises(AssertionError):
         _assert_runtime_apt_contract(mutated)
@@ -223,6 +231,39 @@ def test_runtime_apt_validator_rejects_second_install(
 ) -> None:
     source = (ROOT / "deployment" / "Dockerfile").read_text()
     mutated = f"{source}\nRUN {install_command}\n"
+
+    with pytest.raises(AssertionError):
+        _assert_runtime_apt_contract(mutated)
+
+
+@pytest.mark.parametrize(
+    "install_command",
+    [
+        "sudo apt-get install -y make",
+        "env apt-get install -y make",
+        "command apt-get install -y make",
+        "/usr/bin/apt-get install -y make",
+        "if true; then apt-get install -y make; fi",
+    ],
+)
+def test_runtime_apt_validator_rejects_wrapped_or_conditional_install(
+    install_command: str,
+) -> None:
+    source = (ROOT / "deployment" / "Dockerfile").read_text()
+    mutated = f"{source}\nRUN {install_command}\n"
+
+    with pytest.raises(AssertionError):
+        _assert_runtime_apt_contract(mutated)
+
+
+def test_runtime_apt_validator_rejects_split_install_lifecycle() -> None:
+    source = (ROOT / "deployment" / "Dockerfile").read_text()
+    run_start = source.index("RUN apt-get update")
+    run_end = source.index("\n\nCOPY backend/", run_start)
+    split_lifecycle = """RUN apt-get update
+RUN apt-get install --yes --no-install-recommends ca-certificates gcc libc6-dev
+RUN rm -rf /var/lib/apt/lists/*"""
+    mutated = source[:run_start] + split_lifecycle + source[run_end:]
 
     with pytest.raises(AssertionError):
         _assert_runtime_apt_contract(mutated)
