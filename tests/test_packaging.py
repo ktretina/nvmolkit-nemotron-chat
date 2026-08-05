@@ -75,10 +75,11 @@ def _load_publish_image_workflow(source: str) -> dict[str, Any]:
 
 def _assert_publish_image_workflow(source: str) -> None:
     workflow = _load_publish_image_workflow(source)
-    # PyYAML 6 follows YAML 1.1 and resolves an unquoted `on` key as True.
-    triggers = workflow.get("on", workflow.get(True))
+    triggers = workflow.get("on")
 
-    assert set(workflow) == {"name", True, "permissions", "jobs"}
+    assert set(workflow) == {"name", "on", "permissions", "jobs"}, (
+        "workflow must use the literal string trigger key 'on'"
+    )
     assert workflow["name"] == "Publish container image"
     assert triggers == {"workflow_dispatch": None}
     assert workflow.get("permissions") == {
@@ -169,6 +170,20 @@ def _replace_workflow_once(source: str, old: str, new: str) -> str:
 
 def test_publish_image_workflow_matches_secure_publication_contract() -> None:
     _assert_publish_image_workflow(PUBLISH_IMAGE_WORKFLOW.read_text())
+
+
+@pytest.mark.parametrize("trigger_key", ["1", "true"])
+def test_publish_image_validator_rejects_non_string_trigger_key(
+    trigger_key: str,
+) -> None:
+    source = _replace_workflow_once(
+        PUBLISH_IMAGE_WORKFLOW.read_text(),
+        '"on":\n',
+        f"{trigger_key}:\n",
+    )
+
+    with pytest.raises(AssertionError, match="literal string trigger key"):
+        _assert_publish_image_workflow(source)
 
 
 def test_publish_image_validator_rejects_extra_mutable_tag_push_step() -> None:

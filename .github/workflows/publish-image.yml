@@ -1,6 +1,6 @@
 name: Publish container image
 
-on:
+"on":
   workflow_dispatch:
 
 permissions:
