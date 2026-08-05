@@ -15,6 +15,7 @@ import yaml  # type: ignore[import-untyped]
 
 
 ROOT = Path(__file__).resolve().parents[1]
+PUBLISH_IMAGE_WORKFLOW = ROOT / ".github" / "workflows" / "publish-image.yml"
 
 
 def _exact_pin(dependencies: list[str], package: str) -> str:
@@ -58,6 +59,75 @@ def test_safe_yaml_parser_is_pinned_as_a_test_dependency() -> None:
     test_dependencies = project["project"]["optional-dependencies"]["test"]
 
     assert _exact_pin(test_dependencies, "pyyaml") == "6.0.3"
+
+
+def _load_publish_image_workflow() -> tuple[str, dict[str, Any]]:
+    source = PUBLISH_IMAGE_WORKFLOW.read_text()
+    workflow = yaml.safe_load(source)
+    assert isinstance(workflow, dict), "the image workflow must be a mapping"
+    return source, workflow
+
+
+def test_publish_image_workflow_has_manual_trigger_and_minimal_permissions() -> None:
+    _, workflow = _load_publish_image_workflow()
+    # PyYAML 6 follows YAML 1.1 and resolves an unquoted `on` key as True.
+    triggers = workflow.get("on", workflow.get(True))
+
+    assert triggers == {"workflow_dispatch": None}
+    assert workflow.get("permissions") == {
+        "contents": "read",
+        "packages": "write",
+    }
+    assert set(workflow.get("jobs", {})) == {"publish"}
+
+
+def test_publish_image_workflow_pushes_only_commit_tagged_linux_amd64_image() -> None:
+    source, workflow = _load_publish_image_workflow()
+    publish = workflow["jobs"]["publish"]
+    steps = publish["steps"]
+
+    assert publish.get("runs-on") == "ubuntu-latest"
+    assert "permissions" not in publish
+    assert publish.get("outputs") == {
+        "digest": "${{ steps.build.outputs.digest }}"
+    }
+    assert [step["uses"].partition("@")[0] for step in steps if "uses" in step] == [
+        "actions/checkout",
+        "docker/login-action",
+        "docker/setup-buildx-action",
+        "docker/build-push-action",
+    ]
+    assert all(
+        re.fullmatch(r"[^@]+@[0-9a-f]{40}", step["uses"])
+        for step in steps
+        if "uses" in step
+    ), "third-party actions must be pinned to full commit SHAs"
+
+    login = next(
+        step for step in steps if step.get("uses", "").startswith("docker/login-action@")
+    )
+    assert login["with"] == {
+        "registry": "ghcr.io",
+        "username": "${{ github.actor }}",
+        "password": "${{ secrets.GITHUB_TOKEN }}",
+    }
+
+    build = next(step for step in steps if step.get("id") == "build")
+    assert build["with"] == {
+        "context": ".",
+        "file": "./deployment/Dockerfile",
+        "platforms": "linux/amd64",
+        "push": True,
+        "tags": "ghcr.io/ktretina/nvmolkit-nemotron-chat:${{ github.sha }}",
+    }
+    assert "steps.build.outputs.digest" in source
+    assert "GITHUB_STEP_SUMMARY" in source
+    assert ":latest" not in source
+    assert "NVIDIA_API_KEY" not in source
+    assert "brev" not in source.lower()
+
+    secret_references = set(re.findall(r"secrets\.([A-Za-z0-9_]+)", source))
+    assert secret_references == {"GITHUB_TOKEN"}
 
 
 def test_deployment_docs_preserve_repository_context_and_architecture_limits() -> None:
