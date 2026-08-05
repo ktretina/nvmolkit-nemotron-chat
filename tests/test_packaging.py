@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 import json
 import re
+import shlex
 import shutil
 import subprocess
 import tomllib
@@ -100,6 +101,21 @@ def test_runtime_uses_slim_python_base_with_cuda_wheel_dependencies() -> None:
         '"$VIRTUAL_ENV/bin/python"',
         '"$VIRTUAL_ENV/bin/python"',
     ]
+
+
+def test_runtime_installs_only_required_triton_compiler_packages() -> None:
+    dockerfile = (ROOT / "deployment" / "Dockerfile").read_text()
+    flattened = dockerfile.replace("\\\n", " ")
+    package_lists = re.findall(
+        r"apt-get install\s+--yes\s+--no-install-recommends\s+"
+        r"(.+?)(?=\s+&&)",
+        flattened,
+    )
+
+    assert len(package_lists) == 1, "runtime must have one apt package install"
+    packages = set(shlex.split(package_lists[0]))
+    assert packages == {"ca-certificates", "gcc", "libc6-dev"}
+    assert packages.isdisjoint({"build-essential", "g++", "make"})
 
 
 def test_safe_yaml_parser_is_pinned_as_a_test_dependency() -> None:

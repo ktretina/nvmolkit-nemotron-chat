@@ -20,9 +20,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
     VIRTUAL_ENV=/opt/venv \
     PATH=/opt/venv/bin:$PATH
 
+# Triton compiles nvMolKit kernels at runtime and requires a C compiler and headers.
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
         ca-certificates \
+        gcc \
+        libc6-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/ /tmp/backend/
