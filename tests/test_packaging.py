@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 import re
 import shutil
@@ -22,6 +23,18 @@ APP_IMAGE = (
     "ghcr.io/ktretina/nvmolkit-nemotron-chat@"
     "sha256:0931542cde79aa9d64438c7b720aa80adacb8ab328ab585af5b3b717937f5afb"
 )
+APP_HEALTHCHECK = {
+    "test": [
+        "CMD",
+        "python",
+        "-c",
+        "import urllib.request; "
+        "urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)",
+    ],
+    "interval": "10s",
+    "timeout": "5s",
+    "retries": 12,
+}
 APPROVED_PUBLISH_ACTION_SHAS = {
     "actions/checkout": "3d3c42e5aac5ba805825da76410c181273ba90b1",
     "docker/login-action": "dbcb813823bdd20940b903addbd779551569679f",
@@ -260,6 +273,13 @@ def test_deployment_docs_pin_image_source_and_preserve_architecture_limits() -> 
     assert "Linux x86-64 target-GPU hosts only" in readme
     assert "ARM64 Macs are unsupported" in readme
     assert "emulation has not been tested" in readme
+    assert "31019738589" in readme
+    assert APP_IMAGE_BUILD_COMMIT in readme
+    assert APP_IMAGE in readme
+    assert "CI Linux/amd64 image build and push succeeded" in readme
+    assert "The Docker build" not in readme
+    assert "container execution and history scan remain pending" in readme
+    assert "Brev Console and Secure Link acceptance remain unqualified" in readme
 
 
 def _valid_compose_config() -> dict[str, Any]:
@@ -390,6 +410,82 @@ def _assert_brev_gpu_reservation(config: dict[str, Any]) -> None:
     assert device.get("capabilities") == ["gpu"], (
         "the GPU device reservation capabilities must be exactly ['gpu']"
     )
+
+
+def _assert_authored_compose_contract(config: dict[str, Any]) -> None:
+    services = config.get("services")
+    assert isinstance(services, dict), "services must be a mapping"
+    assert set(services) == {"app"}, (
+        "Compose must define exactly one service named app"
+    )
+
+    _assert_digest_pinned_app_image(config)
+    _assert_brev_gpu_reservation(config)
+
+    app = services["app"]
+    assert app.get("ports") == ["8000:8000"], (
+        "services.app.ports must be exactly ['8000:8000']"
+    )
+    assert app.get("healthcheck") == APP_HEALTHCHECK, (
+        "services.app.healthcheck must be exactly the authored readiness probe"
+    )
+
+
+def test_authored_compose_matches_complete_single_service_contract() -> None:
+    config = _load_authored_compose(
+        (ROOT / "deployment" / "compose.yaml").read_text()
+    )
+
+    _assert_authored_compose_contract(config)
+
+
+def test_authored_contract_rejects_extra_build_backed_mutable_service() -> None:
+    config = _load_authored_compose(
+        (ROOT / "deployment" / "compose.yaml").read_text()
+    )
+    config["services"]["worker"] = {
+        "build": {"context": "."},
+        "image": "ghcr.io/ktretina/nvmolkit-nemotron-chat:latest",
+    }
+
+    with pytest.raises(AssertionError, match="exactly one service named app"):
+        _assert_authored_compose_contract(config)
+
+
+@pytest.mark.parametrize("ports", [None, ["9000:8000"]])
+def test_authored_contract_rejects_missing_or_changed_port(
+    ports: list[str] | None,
+) -> None:
+    config = _load_authored_compose(
+        (ROOT / "deployment" / "compose.yaml").read_text()
+    )
+    if ports is None:
+        config["services"]["app"].pop("ports")
+    else:
+        config["services"]["app"]["ports"] = ports
+
+    with pytest.raises(AssertionError, match="ports must be exactly"):
+        _assert_authored_compose_contract(config)
+
+
+@pytest.mark.parametrize("healthcheck", [None, {"retries": 11}])
+def test_authored_contract_rejects_missing_or_changed_healthcheck(
+    healthcheck: dict[str, Any] | None,
+) -> None:
+    config = _load_authored_compose(
+        (ROOT / "deployment" / "compose.yaml").read_text()
+    )
+    if healthcheck is None:
+        config["services"]["app"].pop("healthcheck")
+    else:
+        changed_healthcheck = deepcopy(
+            config["services"]["app"]["healthcheck"]
+        )
+        changed_healthcheck.update(healthcheck)
+        config["services"]["app"]["healthcheck"] = changed_healthcheck
+
+    with pytest.raises(AssertionError, match="healthcheck must be exactly"):
+        _assert_authored_compose_contract(config)
 
 
 def test_authored_compose_uses_one_brev_compatible_nvidia_gpu_reservation() -> None:
