@@ -1,8 +1,6 @@
 services:
   app:
-    build:
-      context: ..
-      dockerfile: deployment/Dockerfile
+    image: ghcr.io/ktretina/nvmolkit-nemotron-chat@sha256:0931542cde79aa9d64438c7b720aa80adacb8ab328ab585af5b3b717937f5afb
     ports:
       - "8000:8000"
     deploy:
