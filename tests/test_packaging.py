@@ -79,6 +79,19 @@ def test_nvmolkit_and_rdkit_distribution_pins_are_compatible() -> None:
     assert "/tmp/backend" in nvmolkit_install
 
 
+def test_runtime_uses_slim_python_base_with_cuda_wheel_dependencies() -> None:
+    dockerfile = (ROOT / "deployment" / "Dockerfile").read_text()
+    from_lines = re.findall(r"^FROM\s+(.+)$", dockerfile, flags=re.MULTILINE)
+    runtime_stages = [line for line in from_lines if line.endswith(" AS runtime")]
+
+    assert runtime_stages == ["python:3.12-slim-bookworm AS runtime"]
+    assert not any(line.startswith("nvidia/cuda") for line in from_lines)
+    assert "torch==2.7.1+cu128" in dockerfile
+    assert "nvmolkit==0.5.0" in dockerfile
+    assert "--extra-index-url https://download.pytorch.org/whl/cu128" in dockerfile
+    assert "--no-deps" not in dockerfile
+
+
 def test_safe_yaml_parser_is_pinned_as_a_test_dependency() -> None:
     project = tomllib.loads((ROOT / "backend" / "pyproject.toml").read_text())
     test_dependencies = project["project"]["optional-dependencies"]["test"]

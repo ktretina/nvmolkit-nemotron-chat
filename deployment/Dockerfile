@@ -9,9 +9,10 @@ COPY frontend/ ./
 RUN npm test -- --run
 RUN npm run build
 
-# CUDA 12.8 matches the exact PyTorch cu128 wheel installed below. Ubuntu 24.04
-# provides the required CPython 3.12 runtime. Digest pinning remains pending.
-FROM nvidia/cuda:12.8.1-runtime-ubuntu24.04 AS runtime
+# CUDA 12.8 user-space libraries come from the pinned PyTorch cu128 dependency
+# path below; the target host supplies the NVIDIA driver. Digest pinning remains
+# pending.
+FROM python:3.12-slim-bookworm AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -22,12 +23,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
         ca-certificates \
-        python3.12 \
-        python3.12-venv \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/ /tmp/backend/
-RUN python3.12 -m venv "$VIRTUAL_ENV" \
+RUN python -m venv "$VIRTUAL_ENV" \
     && python -m pip install --no-cache-dir --upgrade pip \
     && python -m pip install --no-cache-dir \
         --extra-index-url https://download.pytorch.org/whl/cu128 \
