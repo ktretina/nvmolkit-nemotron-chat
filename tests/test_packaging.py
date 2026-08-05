@@ -155,7 +155,14 @@ def _shell_segments(command: str) -> list[list[str]]:
 
 def _assert_runtime_apt_contract(source: str) -> None:
     runtime_runs = _runtime_run_commands(source)
-    assert len(runtime_runs) == 3, "runtime stage must define exactly three RUNs"
+    apt_install = re.compile(
+        r"(?<![\w-])(?:apt-get|apt)\s+(?:--?\S+\s+)*install\b"
+    )
+    occurrence_count = sum(
+        len(apt_install.findall(re.sub(r'''["'\[\],]''', " ", command)))
+        for command in runtime_runs
+    )
+    assert occurrence_count == 1, "runtime must contain exactly one apt install"
     installs: list[tuple[list[list[str]], int, int]] = []
     assignment = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
     for run_command in runtime_runs:
@@ -198,6 +205,12 @@ def test_runtime_installs_only_required_triton_compiler_packages() -> None:
     _assert_runtime_apt_contract(
         (ROOT / "deployment" / "Dockerfile").read_text()
     )
+
+
+def test_runtime_apt_validator_allows_unrelated_extra_run() -> None:
+    source = (ROOT / "deployment" / "Dockerfile").read_text()
+
+    _assert_runtime_apt_contract(f"{source}\nRUN true\n")
 
 
 @pytest.mark.parametrize(
@@ -265,7 +278,9 @@ def test_runtime_apt_validator_rejects_wrapped_or_conditional_install(
         '["apt-get","install","-y","make"]',
     ],
 )
-def test_runtime_apt_validator_rejects_any_extra_run(extra_run: str) -> None:
+def test_runtime_apt_validator_rejects_nested_or_json_install(
+    extra_run: str,
+) -> None:
     source = (ROOT / "deployment" / "Dockerfile").read_text()
     mutated = f"{source}\nRUN {extra_run}\n"
 
