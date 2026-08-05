@@ -8,7 +8,7 @@ The application image is published, but Brev Console parsing and live qualificat
 - **Public repository:** `https://github.com/ktretina/nvmolkit-nemotron-chat`.
 - **Image-build commit:** `aec792aef589adf315ba37c60a3cf145a52c868c` (`linux/amd64`).
 - **Application image:** `ghcr.io/ktretina/nvmolkit-nemotron-chat@sha256:3dca44cd15b16526f9f02fcd8df0ea54d67032210ab6ddd49dcb98895bc6c3f2`.
-- **Compose source/resource:** In Brev Console, use the commit-pinned GitHub blob URL `https://github.com/ktretina/nvmolkit-nemotron-chat/blob/0314ea5b0066f12a5cdb874bfbeb305bcb413263/deployment/compose.yaml`. The Compose file is image-backed and requires no source-repository build context. Brev Console Compose parse is **PENDING**; this URL is not yet claimed accepted.
+- **Compose source/resource:** In Brev Console, use the commit-pinned GitHub blob URL `https://github.com/ktretina/nvmolkit-nemotron-chat/blob/e6130081d421b421e553223375a130b2365d08ab/deployment/compose.yaml`. The Compose file is image-backed and requires no source-repository build context. Brev Console Compose parse is **PENDING**; this URL is not yet claimed accepted.
 - **Architecture:** Linux x86-64.
 - **Hardware:** One NVIDIA GPU with compute capability 7.0 or newer and a host driver that supports the CUDA 12.8 container runtime.
 - **Disk:** 50 GiB.
