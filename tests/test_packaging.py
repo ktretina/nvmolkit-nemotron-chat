@@ -154,9 +154,11 @@ def _shell_segments(command: str) -> list[list[str]]:
 
 
 def _assert_runtime_apt_contract(source: str) -> None:
+    runtime_runs = _runtime_run_commands(source)
+    assert len(runtime_runs) == 3, "runtime stage must define exactly three RUNs"
     installs: list[tuple[list[list[str]], int, int]] = []
     assignment = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
-    for run_command in _runtime_run_commands(source):
+    for run_command in runtime_runs:
         segments = _shell_segments(run_command)
         for segment_index, segment in enumerate(segments):
             for index, token in enumerate(segment):
@@ -251,6 +253,21 @@ def test_runtime_apt_validator_rejects_wrapped_or_conditional_install(
 ) -> None:
     source = (ROOT / "deployment" / "Dockerfile").read_text()
     mutated = f"{source}\nRUN {install_command}\n"
+
+    with pytest.raises(AssertionError):
+        _assert_runtime_apt_contract(mutated)
+
+
+@pytest.mark.parametrize(
+    "extra_run",
+    [
+        "sh -c 'apt-get install -y make'",
+        '["apt-get","install","-y","make"]',
+    ],
+)
+def test_runtime_apt_validator_rejects_any_extra_run(extra_run: str) -> None:
+    source = (ROOT / "deployment" / "Dockerfile").read_text()
+    mutated = f"{source}\nRUN {extra_run}\n"
 
     with pytest.raises(AssertionError):
         _assert_runtime_apt_contract(mutated)
