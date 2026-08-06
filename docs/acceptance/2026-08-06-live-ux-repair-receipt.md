@@ -101,6 +101,14 @@ Redacted Gitleaks reported two `generic-api-key` findings in image configuration
 
 This phase establishes build and registry identity only. It does not establish that the image starts, can see CUDA, imports nvMolKit on an L4, produces valid scientific outputs on the target runtime, reaches hosted Nemotron, or works through a Brev Secure Link.
 
+## Phase B local deployment metadata
+
+Local commit `80157583aeb19e6b20f4bb259336806d9a2e3fc1` is the immutable Compose anchor for the corrected OCI index. Its only Compose change replaces the prior image reference with `ghcr.io/ktretina/nvmolkit-nemotron-chat@sha256:1911d4eae820fad11b5aac8634fefcc69557ace82194870e2711896c134d2a08`; `TRITON_CACHE_DIR`, port `8000`, the single NVIDIA GPU reservation, and the health check are unchanged.
+
+After a separate push approval and exact remote readback, the intended immutable Compose resource is `https://github.com/ktretina/nvmolkit-nemotron-chat/blob/80157583aeb19e6b20f4bb259336806d9a2e3fc1/deployment/compose.yaml`. Until that readback succeeds, the URL is a local handoff target rather than confirmed remote state. The accompanying Launchable metadata requires Linux/amd64, exactly one NVIDIA L4, 50 GiB storage, a Secure Link on port 8000, and no public TCP or UDP ports. It defines no Launchable or Compose API-key default.
+
+This local metadata update did not call Brev, inspect an instance, authenticate, refresh shared credentials, edit a Console Launchable, create a deployment, or incur cloud cost.
+
 ## Deliberately unrun gates
 
 | Gate | Status | Boundary |

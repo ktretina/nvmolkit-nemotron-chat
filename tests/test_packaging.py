@@ -18,19 +18,25 @@ import yaml  # type: ignore[import-untyped]
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLISH_IMAGE_WORKFLOW = ROOT / ".github" / "workflows" / "publish-image.yml"
-APP_IMAGE_BUILD_COMMIT = "572241e9bc9cf49f2614f8ef5a2566f54b831645"
-APP_IMAGE_BUILD_RUN = "31048410625"
-IMAGE_BACKED_COMPOSE_COMMIT = "6d05a76c93ea22aa62fcfc92af61b1421e02a1d7"
+APP_IMAGE_BUILD_COMMIT = "7b82e3722075acad4868896716c1eb66ac642f65"
+APP_IMAGE_BUILD_RUN = "31126921793"
+IMAGE_BACKED_COMPOSE_COMMIT = "80157583aeb19e6b20f4bb259336806d9a2e3fc1"
 APP_IMAGE = (
     "ghcr.io/ktretina/nvmolkit-nemotron-chat@"
-    "sha256:10c8297827ed96bce8f413986cec13e77b2b266555527c1f21e425082d0fec88"
+    "sha256:1911d4eae820fad11b5aac8634fefcc69557ace82194870e2711896c134d2a08"
 )
 APP_AMD64_MANIFEST = (
-    "sha256:a3e69c03c8eda6ee3d5dbc92af4284b46ab671ecb915fa3d744ccd79a475c61e"
+    "sha256:7141d8c9cba22b473a064846f30f865bed3840a0b53bc386472d8bdb41cc05de"
 )
-APP_AMD64_COMPRESSED_BYTES = "4,201,741,858 bytes"
-APP_AMD64_COMPRESSED_GIB = "3.9131770451 GiB"
+APP_AMD64_COMPRESSED_BYTES = "4,201,723,821 bytes"
+APP_AMD64_COMPRESSED_GIB = "3.9131602468 GiB"
 STALE_IMAGE_EVIDENCE = (
+    "31048410625",
+    "572241e9bc9cf49f2614f8ef5a2566f54b831645",
+    "sha256:10c8297827ed96bce8f413986cec13e77b2b266555527c1f21e425082d0fec88",
+    "sha256:a3e69c03c8eda6ee3d5dbc92af4284b46ab671ecb915fa3d744ccd79a475c61e",
+    "4,201,741,858 bytes",
+    "3.9131770451 GiB",
     "31032058838",
     "aec792aef589adf315ba37c60a3cf145a52c868c",
     "sha256:3dca44cd15b16526f9f02fcd8df0ea54d67032210ab6ddd49dcb98895bc6c3f2",
@@ -587,6 +593,20 @@ def test_deployment_docs_pin_image_source_and_preserve_architecture_limits() -> 
     assert "unqualified" in launchable_lower
     assert "immutable deployment" in launchable_lower
     assert "gpu acceptance" in launchable_lower
+    assert "Linux x86-64" in launchable
+    assert re.search(r"\bL4\b", launchable), "the handoff must require an L4"
+    assert "50 GiB" in launchable
+    assert "Port `8000`" in launchable
+    assert "No public TCP or UDP ports" in launchable
+    assert "No Launchable variable or environment default" in launchable
+    assert re.search(
+        r"live runtime[^.\n]*\bpending\b",
+        launchable_lower,
+    ), "live runtime qualification must be explicitly pending"
+    assert re.search(
+        r"fresh deployment[^.\n]*\bpending\b",
+        launchable_lower,
+    ), "fresh deployment qualification must be explicitly pending"
     assert re.search(
         r"hosted nemotron[^.\n]*\bpending\b",
         launchable_lower,
