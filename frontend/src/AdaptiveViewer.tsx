@@ -130,8 +130,9 @@ function PersistentConformerPane({ visualization }: { visualization: ConformerVi
 
   return (
     <section
-      className="conformer-pane"
+      className={visualization ? "conformer-pane is-active" : "conformer-pane"}
       hidden={!visualization}
+      aria-hidden={!visualization}
       role="group"
       aria-labelledby={titleId}
       aria-describedby={descriptionId}
@@ -144,13 +145,13 @@ function PersistentConformerPane({ visualization }: { visualization: ConformerVi
         <label>
           Molecule
           <select value={moleculeId} onChange={(event) => chooseMolecule(event.target.value)}>
-            {visualization?.selectors.molecule_ids.map((id) => <option key={id}>{id}</option>)}
+            {visualization?.selectors.molecule_ids.map((id) => <option key={id} value={id}>{id}</option>)}
           </select>
         </label>
         <label>
           Conformer
           <select value={conformerId} onChange={(event) => setConformerId(event.target.value)}>
-            {availableConformers.map((id) => <option key={id}>{id}</option>)}
+            {availableConformers.map((id) => <option key={id} value={id}>{id}</option>)}
           </select>
         </label>
         <label>
