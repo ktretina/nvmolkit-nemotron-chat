@@ -10,6 +10,7 @@
 - Local host: macOS, Apple arm64.
 - Scope result: **PASS** for the local backend, frontend unit, frontend type, frontend production-build, Chromium UI, Compose parsing, byte-compilation, repository-diff, and credential-scan gates described below.
 - External-write boundary: no branch was pushed, no workflow was dispatched, no image was built or published, and no Brev resource or Launchable was read or modified during Tasks 0-8.
+- Phase A publication result: **PASS** for one browser-gated GitHub Actions run and immutable registry readback from the accepted repair commit; runtime, GPU, hosted-provider, Secure Link, and Brev gates remain pending.
 
 This receipt contains no NVIDIA API key, raw credential-bearing request, or hosted-model response. The browser tests use intercepted local API responses and therefore establish frontend behavior, not live hosted-provider availability.
 
@@ -79,21 +80,40 @@ In addition to the redacted Gitleaks scan, count-only NVIDIA-key-shape scans wer
 
 Path-only and exact-fixture checks established that every nonzero shape match is the single synthetic test fixture `nvapi-secret-that-must-never-leak` in `tests/test_api.py`, repeated through its commit history. Confirmed credentials: **0**. Gitleaks independently reported zero findings. No matching value was printed during the scans.
 
+## Phase A publication and registry evidence
+
+The reviewed branch `codex/fix-live-nvmolkit-ux-20260806` was pushed at exact source commit `7b82e3722075acad4868896716c1eb66ac642f65`. Exactly one manual publication workflow was dispatched. GitHub Actions run [`31126921793`](https://github.com/ktretina/nvmolkit-nemotron-chat/actions/runs/31126921793) ran from `2026-08-06T19:30:05Z` through `2026-08-06T19:39:24Z` and concluded `success`. Its `verify` job passed backend tests, frontend units, typechecking, the production build, Chromium installation, and all three production browser tests before the `publish` job could run.
+
+| Evidence | Result |
+| --- | --- |
+| Source commit | `7b82e3722075acad4868896716c1eb66ac642f65` |
+| Workflow | `31126921793`, attempt 1, `success` |
+| OCI index | `sha256:1911d4eae820fad11b5aac8634fefcc69557ace82194870e2711896c134d2a08` |
+| Linux/amd64 manifest | `sha256:7141d8c9cba22b473a064846f30f865bed3840a0b53bc386472d8bdb41cc05de` |
+| Attestation manifest | `sha256:b027d539f078988c21a2b8003462ec86e8d97d70315aa3fa06898c025eb9deb9` |
+| Compressed Linux/amd64 layers | 12 layers; 4,201,723,821 bytes (3.9131602468 GiB) |
+| Image configuration | Linux/amd64; non-root user `app`; working directory `/app/backend`; port `8000/tcp`; Uvicorn command on `0.0.0.0:8000`; no `NVIDIA_API_KEY` environment entry |
+| Provenance | SLSA provenance binds run attempt 1, source repository, source commit, Linux/amd64 manifest, and the resolved Node and Python base-image indexes |
+
+Registry inspection was read-only and did not pull or execute the 3.913 GiB image. The four small application/build layers containing the backend application, bundled data, built frontend, and final ownership metadata were streamed directly from GHCR and scanned with redacted Gitleaks: 0 findings across approximately 11.1 MB. NVIDIA-key-shaped value counts were 0 in those layers, the image configuration/history, and the provenance payload.
+
+Redacted Gitleaks reported two `generic-api-key` findings in image configuration/history and three in provenance, all with field context `GPG_KEY=<redacted>`. A value-equality check established that the candidate's field exactly matches the resolved official Python Linux/amd64 base image. It is an inherited public signing-key fingerprint, not an application or NVIDIA credential. Confirmed image credentials: **0**.
+
+This phase establishes build and registry identity only. It does not establish that the image starts, can see CUDA, imports nvMolKit on an L4, produces valid scientific outputs on the target runtime, reaches hosted Nemotron, or works through a Brev Secure Link.
+
 ## Deliberately unrun gates
 
 | Gate | Status | Boundary |
 | --- | --- | --- |
-| Branch push or pull request | `not_run` | Task 9 requires a new explicit external-write approval. |
-| Publish workflow dispatch | `not_run` | No GitHub Actions run was requested. |
-| Linux x86-64 image build | `not_run` | The local gate did not build the target image. |
-| Image digest and container-history scan | `not_run` | No candidate image exists for this repair. |
+| Pull request or default-branch merge | `not_run` | Only the reviewed feature branch was pushed. |
+| Phase B metadata push | `not_run` | The digest-pinned Compose and handoff metadata require separate review and approval. |
 | GPU/nvMolKit runtime test | `not_run` | The one GPU test remained explicitly skipped; no CUDA hardware was used. |
 | Live hosted Nemotron request | `not_run` | No API key was supplied to the repaired candidate. |
 | Live Secure Link/browser acceptance | `not_run` | Local intercepted browser tests are not a substitute for a deployed service. |
 | Brev instance inspection or modification | `not_run` | No Brev CLI, SSH, Console, or instance action was performed. |
-| Launchable update | `not_run` | No Launchable field was read or changed. |
+| Brev Launchable definition update | `not_run` | Local handoff metadata are not a Console or platform mutation. |
 | Fresh Brev deployment | `not_run` | Publication and Launchable phases require separate approval and evidence. |
 
 ## Local conclusion
 
-Tasks 0-8 pass their local acceptance criteria at the implementation candidate above. This is not a release, GPU-runtime, hosted-provider, or fresh-deployment qualification. Work stops at the planned approval boundary before Task 9.
+Tasks 0-8 pass their local acceptance criteria and Task 9 produced one immutable, browser-gated Linux/amd64 registry artifact from the reviewed repair commit. The artifact is not yet GPU-runtime, hosted-provider, Secure Link, or fresh-deployment qualified. Phase B metadata remains local until separately reviewed and approved for push; no Brev access or mutation has occurred.
