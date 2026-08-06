@@ -42,6 +42,8 @@ h1, h2, p { margin-top: 0; }
 .eyebrow { margin-bottom: 0; color: #76b900; font-size: 0.78rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
 .text-button { border: 0; background: transparent; color: #b9bdc2; }
 .text-button:hover, .text-button:focus-visible { color: #fff; }
+.session-actions { display: flex; align-items: center; gap: 10px; }
+.session-actions .text-button { padding: 6px 0; white-space: nowrap; }
 
 .conversation { flex: 1; overflow-y: auto; padding: clamp(24px, 5vw, 64px) 24px 24px; }
 .welcome { max-width: 500px; margin: 0 auto 26px; text-align: center; }
@@ -68,6 +70,7 @@ h1, h2, p { margin-top: 0; }
 .compact-prompt-menu button { flex: 0 0 auto; max-width: 220px; overflow: hidden; padding: 7px 10px; border: 1px solid #32363c; border-radius: 7px; background: #171a1e; color: #d8dbde; font-size: 0.72rem; text-overflow: ellipsis; white-space: nowrap; }
 
 .request-status { min-height: 28px; padding: 4px 24px; color: #9bc94d; font-size: 0.82rem; }
+.provider-notice { margin: 0; padding: 4px 24px 8px; color: #d8bf7a; font-size: 0.78rem; }
 .error-message { color: #ff9a9a; }
 .pane-error { margin: 0; padding: 4px 24px 8px; }
 .chat-form { display: grid; grid-template-columns: 1fr auto; gap: 10px; padding: 14px 22px 8px; border-top: 1px solid #25292e; }

@@ -1,8 +1,16 @@
 import { FormEvent, useEffect, useState } from "react";
 
 import AdaptiveViewer from "./AdaptiveViewer";
-import { clearSession, getSession, sendMessage, sendSuggestedPrompt, setSessionKey } from "./api";
-import type { PromptId, Visualization } from "./types";
+import {
+  ApiError,
+  endSession,
+  getSession,
+  resetWorkspace,
+  sendMessage,
+  sendSuggestedPrompt,
+  setSessionKey,
+} from "./api";
+import type { PromptId, ProviderStatus, Visualization } from "./types";
 import "./styles.css";
 
 const SUGGESTED_PROMPTS: Array<{ id: PromptId; label: string }> = [
@@ -17,6 +25,16 @@ const ANALYSIS_FUNCTIONS: Record<Visualization["kind"], string> = {
   similarity: "analyze_similarity_map",
   clusters: "analyze_cluster_distribution",
   conformers: "analyze_representative_conformers",
+};
+
+const PROVIDER_MESSAGES: Record<ProviderStatus, string | null> = {
+  unchecked: "Nemotron will be checked on the first hosted request.",
+  available: null,
+  authentication_failed: "Nemotron rejected the API key. End the session and enter a valid key.",
+  rate_limited: "Nemotron rate-limited the request. Try again later.",
+  provider_unavailable: "Nemotron is temporarily unavailable.",
+  model_unavailable: "The configured Nemotron model is unavailable.",
+  invalid_response: "Nemotron returned a response outside the supported bounded analyses.",
 };
 
 interface ChatEntry {
@@ -40,6 +58,7 @@ export default function App() {
   const [figureContext, setFigureContext] = useState<FigureContext | null>(null);
   const [failedRequest, setFailedRequest] = useState<string | null>(null);
   const [chatStarted, setChatStarted] = useState(false);
+  const [providerStatus, setProviderStatus] = useState<ProviderStatus>("unchecked");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -50,6 +69,7 @@ export default function App() {
         if (!active) return;
         setAuthenticated(session.authenticated);
         setVisualization(session.visualization);
+        setProviderStatus(session.provider_status);
         if (session.visualization) {
           setFigureContext({
             functionName: ANALYSIS_FUNCTIONS[session.visualization.kind],
@@ -74,9 +94,10 @@ export default function App() {
     setBusy(true);
     setError(null);
     try {
-      await setSessionKey(candidate);
+      const workspace = await setSessionKey(candidate);
       setApiKey("");
-      setAuthenticated(true);
+      setAuthenticated(workspace.authenticated);
+      setProviderStatus(workspace.provider_status);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The session could not be started.");
     } finally {
@@ -96,6 +117,7 @@ export default function App() {
         ? await sendMessage(input.message)
         : await sendSuggestedPrompt(input.promptId);
       setVisualization(result.visualization);
+      setProviderStatus(result.provider_status);
       setFigureContext({
         functionName: ANALYSIS_FUNCTIONS[result.visualization.kind],
         requestText: userText,
@@ -112,7 +134,12 @@ export default function App() {
       }]);
     } catch (caught) {
       if (visualization) setFailedRequest(userText);
-      setError(caught instanceof Error ? caught.message : "The analysis could not be completed.");
+      if (caught instanceof ApiError && caught.providerStatus) {
+        setProviderStatus(caught.providerStatus);
+        setError(null);
+      } else {
+        setError(caught instanceof Error ? caught.message : "The analysis could not be completed.");
+      }
     } finally {
       setBusy(false);
     }
@@ -126,20 +153,47 @@ export default function App() {
     void runAnalysis({ message: trimmed });
   }
 
-  async function logout() {
+  async function newAnalysis() {
     if (busy) return;
     setBusy(true);
     setError(null);
     try {
-      await clearSession();
+      const reset = await resetWorkspace();
+      setAuthenticated(reset.authenticated);
+      setProviderStatus(reset.provider_status);
+      setVisualization(null);
+      setFigureContext(null);
+      setFailedRequest(null);
+      setChatStarted(false);
+      setEntries([]);
+      setMessage("");
+    } catch (caught) {
+      if (caught instanceof ApiError && caught.providerStatus) {
+        setProviderStatus(caught.providerStatus);
+        setError(null);
+      } else {
+        setError(caught instanceof Error ? caught.message : "The analysis workspace could not be reset.");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function endWorkspaceSession() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await endSession();
       setAuthenticated(false);
+      setProviderStatus("unchecked");
       setVisualization(null);
       setFigureContext(null);
       setFailedRequest(null);
       setChatStarted(false);
       setEntries([]);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The session could not be cleared.");
+      setError(caught instanceof Error ? caught.message : "The session could not be ended.");
     } finally {
       setBusy(false);
     }
@@ -164,7 +218,7 @@ export default function App() {
               onChange={(event) => setApiKey(event.target.value)}
               disabled={busy}
             />
-            <button type="submit" disabled={busy || !apiKey.trim()}>{busy ? "Starting…" : "Start session"}</button>
+            <button type="submit" disabled={busy || !apiKey.trim()}>{busy ? "Starting…" : "Start workspace"}</button>
             {error && <p role="alert" className="error-message">{error}</p>}
           </form>
         </section>
@@ -172,7 +226,10 @@ export default function App() {
         <section className="chat-pane" aria-label="Molecular analysis chat">
         <header className="chat-header">
           <div><p className="eyebrow">nvMolKit</p><h1>Molecular explorer</h1></div>
-          <button className="text-button" type="button" onClick={() => void logout()} disabled={busy}>Clear session</button>
+          <div className="session-actions" aria-label="Workspace actions">
+            <button className="text-button" type="button" onClick={() => void newAnalysis()} disabled={busy}>New analysis</button>
+            <button className="text-button" type="button" onClick={() => void endWorkspaceSession()} disabled={busy}>End session</button>
+          </div>
         </header>
         <div className="conversation">
           <div className="welcome">
@@ -218,6 +275,11 @@ export default function App() {
         <div className="request-status" role="status" aria-live="polite">
           {busy ? "Computing the molecular analysis…" : "Ready"}
         </div>
+        {PROVIDER_MESSAGES[providerStatus] && (
+          <p className="provider-notice" role="status" aria-live="polite">
+            {PROVIDER_MESSAGES[providerStatus]}
+          </p>
+        )}
         {error && <p role="alert" className="error-message pane-error">{error}</p>}
         <form className="chat-form" onSubmit={submitMessage}>
           <label htmlFor="chat-message" className="sr-only">Ask about the bundled molecules</label>

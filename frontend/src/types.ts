@@ -1,5 +1,14 @@
 export type PromptId = "fingerprints" | "similarity" | "clusters" | "conformers";
 
+export type ProviderStatus =
+  | "unchecked"
+  | "available"
+  | "authentication_failed"
+  | "rate_limited"
+  | "provider_unavailable"
+  | "model_unavailable"
+  | "invalid_response";
+
 export interface PlotlyTitle {
   text: string;
 }
@@ -69,8 +78,21 @@ export type Visualization = AnalysisPlotlyGraph | ConformerVisualization;
 export interface SessionResponse {
   authenticated: boolean;
   visualization: Visualization | null;
+  provider_status: ProviderStatus;
 }
 
 export interface ChatResponse {
   visualization: Visualization;
+  provider_status: ProviderStatus;
+}
+
+export interface StartWorkspaceResponse {
+  authenticated: true;
+  provider_status: ProviderStatus;
+}
+
+export interface WorkspaceResetResponse {
+  authenticated: true;
+  visualization: null;
+  provider_status: "unchecked";
 }

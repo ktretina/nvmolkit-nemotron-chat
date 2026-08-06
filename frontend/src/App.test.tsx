@@ -88,7 +88,7 @@ beforeEach(() => {
 });
 
 it("requires a masked key before showing chat", async () => {
-  mockFetch(response({ authenticated: false, visualization: null }));
+  mockFetch(response({ authenticated: false, visualization: null, provider_status: "unchecked" }));
   render(<App />);
 
   expect(await screen.findByLabelText(/nvidia api key/i)).toHaveAttribute("type", "password");
@@ -97,14 +97,14 @@ it("requires a masked key before showing chat", async () => {
 
 it("submits the key only to the backend, clears it, and never uses browser storage", async () => {
   const fetchMock = mockFetch(
-    response({ authenticated: false, visualization: null }),
-    response({ authenticated: true }),
+    response({ authenticated: false, visualization: null, provider_status: "unchecked" }),
+    response({ authenticated: true, provider_status: "unchecked" }),
   );
   const localSet = vi.spyOn(Storage.prototype, "setItem");
   render(<App />);
   const input = await screen.findByLabelText(/nvidia api key/i);
   fireEvent.change(input, { target: { value: "nvapi-test-secret" } });
-  fireEvent.click(screen.getByRole("button", { name: /start session/i }));
+  fireEvent.click(screen.getByRole("button", { name: /start workspace/i }));
 
   await screen.findAllByTestId("suggested-prompt");
   expect(fetchMock).toHaveBeenLastCalledWith(
@@ -120,17 +120,18 @@ it("submits the key only to the backend, clears it, and never uses browser stora
 });
 
 it("renders all four suggested prompts after authentication", async () => {
-  mockFetch(response({ authenticated: true, visualization: null }));
+  mockFetch(response({ authenticated: true, visualization: null, provider_status: "unchecked" }));
   render(<App />);
   const prompts = await screen.findAllByTestId("suggested-prompt");
   expect(prompts.map((prompt) => prompt.textContent)).toEqual(exactPrompts);
+  expect(screen.getByLabelText(/ask about the bundled molecules/i)).toBeVisible();
 });
 
 it("moves the guaranteed prompts into a compact menu once chat begins", async () => {
   const fetchMock = mockFetch(
-    response({ authenticated: true, visualization: null }),
-    response({ visualization: graph }),
-    response({ visualization: graph }),
+    response({ authenticated: true, visualization: null, provider_status: "unchecked" }),
+    response({ visualization: graph, provider_status: "available" }),
+    response({ visualization: graph, provider_status: "available" }),
   );
   render(<App />);
   fireEvent.click(await screen.findByRole("button", { name: exactPrompts[1] }));
@@ -146,9 +147,9 @@ it("moves the guaranteed prompts into a compact menu once chat begins", async ()
 
 it("sends a suggested prompt ID directly and a free-form message separately", async () => {
   const fetchMock = mockFetch(
-    response({ authenticated: true, visualization: null }),
-    response({ visualization: graph }),
-    response({ visualization: graph }),
+    response({ authenticated: true, visualization: null, provider_status: "unchecked" }),
+    response({ visualization: graph, provider_status: "available" }),
+    response({ visualization: graph, provider_status: "available" }),
   );
   render(<App />);
   fireEvent.click(await screen.findByRole("button", { name: exactPrompts[1] }));
@@ -163,12 +164,13 @@ it("sends a suggested prompt ID directly and a free-form message separately", as
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
   expect(JSON.parse(String((fetchMock.mock.calls[1][1] as RequestInit).body))).toEqual({ prompt_id: "similarity" });
   expect(JSON.parse(String((fetchMock.mock.calls[2][1] as RequestInit).body))).toEqual({ message: "Show molecular groups" });
+  expect(screen.getByLabelText(/ask about the bundled molecules/i)).toBeVisible();
 });
 
 it("keeps the latest figure visible when a later request fails", async () => {
   mockFetch(
-    response({ authenticated: true, visualization: null }),
-    response({ visualization: graph }),
+    response({ authenticated: true, visualization: null, provider_status: "unchecked" }),
+    response({ visualization: graph, provider_status: "available" }),
     response({ detail: "Chemistry runtime is unavailable." }, false, 503),
   );
   render(<App />);
@@ -184,13 +186,32 @@ it("keeps the latest figure visible when a later request fails", async () => {
   expect(screen.getByText(/latest request failed/i)).toHaveTextContent(exactPrompts[2]);
 });
 
-it("clears the ephemeral session on logout", async () => {
+it("starts a new analysis without ending the authenticated workspace", async () => {
   const fetchMock = mockFetch(
-    response({ authenticated: true, visualization: graph }),
+    response({ authenticated: true, visualization: graph, provider_status: "available" }),
+    response({ authenticated: true, visualization: null, provider_status: "unchecked" }),
+  );
+  render(<App />);
+
+  fireEvent.click(await screen.findByRole("button", { name: /new analysis/i }));
+
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  expect(fetchMock).toHaveBeenLastCalledWith(
+    "/api/session/reset",
+    expect.objectContaining({ method: "POST", credentials: "same-origin" }),
+  );
+  expect(screen.queryByLabelText(/nvidia api key/i)).not.toBeInTheDocument();
+  expect(screen.queryByRole("figure", { name: /pairwise molecular similarity/i })).not.toBeInTheDocument();
+  expect(screen.getByLabelText(/ask about the bundled molecules/i)).toBeVisible();
+});
+
+it("ends the ephemeral session and returns to key entry", async () => {
+  const fetchMock = mockFetch(
+    response({ authenticated: true, visualization: graph, provider_status: "available" }),
     response({ authenticated: false }),
   );
   render(<App />);
-  fireEvent.click(await screen.findByRole("button", { name: /clear session/i }));
+  fireEvent.click(await screen.findByRole("button", { name: /end session/i }));
 
   expect(await screen.findByLabelText(/nvidia api key/i)).toBeInTheDocument();
   expect(fetchMock).toHaveBeenLastCalledWith(
@@ -201,20 +222,20 @@ it("clears the ephemeral session on logout", async () => {
 
 it("retains one 3D viewer through logout and reauthentication", async () => {
   mockFetch(
-    response({ authenticated: true, visualization: conformerGraph }),
+    response({ authenticated: true, visualization: conformerGraph, provider_status: "available" }),
     response({ authenticated: false }),
-    response({ authenticated: true }),
-    response({ visualization: conformerGraph }),
+    response({ authenticated: true, provider_status: "unchecked" }),
+    response({ visualization: conformerGraph, provider_status: "available" }),
   );
   render(<App />);
   await screen.findByRole("group", { name: /3d molecular conformer/i });
   expect(appCreateViewer).toHaveBeenCalledTimes(1);
 
-  fireEvent.click(screen.getByRole("button", { name: /clear session/i }));
+  fireEvent.click(screen.getByRole("button", { name: /end session/i }));
   const key = await screen.findByLabelText(/nvidia api key/i);
   expect(appViewer.clear).toHaveBeenCalled();
   fireEvent.change(key, { target: { value: "nvapi-new-session" } });
-  fireEvent.click(screen.getByRole("button", { name: /start session/i }));
+  fireEvent.click(screen.getByRole("button", { name: /start workspace/i }));
   fireEvent.click(await screen.findByRole("button", { name: exactPrompts[3] }));
   await screen.findByText(/one conformer is available/i);
 
@@ -223,9 +244,31 @@ it("retains one 3D viewer through logout and reauthentication", async () => {
 });
 
 it("exposes accessible status and responsive layout hooks", async () => {
-  mockFetch(response({ authenticated: true, visualization: null }));
+  mockFetch(response({ authenticated: true, visualization: null, provider_status: "unchecked" }));
   render(<App />);
   expect(await screen.findByRole("main")).toHaveClass("app-shell");
-  expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
+  expect(screen.getByText("Ready")).toHaveAttribute("aria-live", "polite");
+  expect(screen.getByText(/nemotron will be checked/i)).toHaveAttribute("aria-live", "polite");
   expect(screen.getByRole("region", { name: /scientific visualization/i })).toBeInTheDocument();
+});
+
+it("renders fixed provider guidance without exposing provider response text", async () => {
+  mockFetch(
+    response({ authenticated: true, visualization: null, provider_status: "unchecked" }),
+    response({
+      detail: {
+        message: "raw nvapi-secret provider response",
+        provider_status: "authentication_failed",
+        allowed_prompt_ids: ["fingerprints", "similarity", "clusters", "conformers"],
+      },
+    }, false, 401),
+  );
+  render(<App />);
+  fireEvent.change(await screen.findByLabelText(/ask about the bundled molecules/i), {
+    target: { value: "Show molecular groups" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /send message/i }));
+
+  expect(await screen.findByText(/nemotron rejected the api key/i)).toBeVisible();
+  expect(screen.queryByText(/raw nvapi-secret/i)).not.toBeInTheDocument();
 });
