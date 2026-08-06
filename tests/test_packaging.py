@@ -53,6 +53,8 @@ APP_HEALTHCHECK = {
 APP_ENVIRONMENT = {"TRITON_CACHE_DIR": "/tmp/triton-cache"}
 APPROVED_PUBLISH_ACTION_SHAS = {
     "actions/checkout": "3d3c42e5aac5ba805825da76410c181273ba90b1",
+    "actions/setup-node": "820762786026740c76f36085b0efc47a31fe5020",
+    "actions/setup-python": "5fda3b95a4ea91299a34e894583c3862153e4b97",
     "docker/login-action": "dbcb813823bdd20940b903addbd779551569679f",
     "docker/setup-buildx-action": "bb05f3f5519dd87d3ba754cc423b652a5edd6d2c",
     "docker/build-push-action": "53b7df96c91f9c12dcc8a07bcb9ccacbed38856a",
@@ -342,12 +344,17 @@ def _assert_publish_image_workflow(source: str) -> None:
         "contents": "read",
         "packages": "write",
     }
-    assert set(workflow.get("jobs", {})) == {"publish"}
+    assert set(workflow.get("jobs", {})) == {"verify", "publish"}
+    verify = workflow["jobs"]["verify"]
     publish = workflow["jobs"]["publish"]
+    verify_steps = verify["steps"]
     steps = publish["steps"]
 
-    assert set(publish) == {"runs-on", "outputs", "steps"}
+    assert set(verify) == {"runs-on", "steps"}
+    assert verify.get("runs-on") == "ubuntu-latest"
+    assert set(publish) == {"runs-on", "needs", "outputs", "steps"}
     assert publish.get("runs-on") == "ubuntu-latest"
+    assert publish.get("needs") == "verify"
     assert publish.get("outputs") == {
         "digest": "${{ steps.build.outputs.digest }}"
     }
@@ -370,6 +377,69 @@ def _assert_publish_image_workflow(source: str) -> None:
         re.fullmatch(r"[0-9a-f]{40}", sha)
         for sha in APPROVED_PUBLISH_ACTION_SHAS.values()
     )
+    expected_verify_steps = [
+        {
+            "name": "Check out verification source",
+            "uses": action_uses["actions/checkout"],
+            "with": {"persist-credentials": False},
+        },
+        {
+            "name": "Set up Python",
+            "uses": action_uses["actions/setup-python"],
+            "with": {
+                "python-version": "3.12",
+                "cache": "pip",
+                "cache-dependency-path": "backend/pyproject.toml",
+            },
+        },
+        {
+            "name": "Install backend test dependencies",
+            "run": "python -m pip install -e 'backend[test]'",
+        },
+        {
+            "name": "Test backend",
+            "run": "python -m pytest tests -m 'not gpu' -ra",
+        },
+        {
+            "name": "Set up Node",
+            "uses": action_uses["actions/setup-node"],
+            "with": {
+                "node-version": "24",
+                "cache": "npm",
+                "cache-dependency-path": "frontend/package-lock.json",
+            },
+        },
+        {
+            "name": "Install frontend dependencies",
+            "run": "npm ci --prefix frontend",
+        },
+        {
+            "name": "Test frontend units",
+            "run": "npm --prefix frontend test -- --run",
+        },
+        {
+            "name": "Typecheck frontend",
+            "run": "npm --prefix frontend run typecheck",
+        },
+        {
+            "name": "Build frontend",
+            "run": "npm --prefix frontend run build",
+        },
+        {
+            "name": "Install Chromium",
+            "run": "npx playwright install --with-deps chromium",
+            "working-directory": "frontend",
+        },
+        {
+            "name": "Test production browser UX",
+            "run": "npm run test:e2e",
+            "working-directory": "frontend",
+        },
+    ]
+    assert verify_steps == expected_verify_steps, (
+        "verification steps must match the ordered workflow step contract"
+    )
+
     expected_steps = [
         {
             "name": "Check out repository",
@@ -460,8 +530,8 @@ def test_publish_image_validator_rejects_extra_mutable_tag_push_step() -> None:
 def test_publish_image_validator_rejects_changed_action_sha() -> None:
     source = _replace_workflow_once(
         PUBLISH_IMAGE_WORKFLOW.read_text(),
-        "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-        "actions/checkout@0000000000000000000000000000000000000000",
+        "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+        "actions/setup-node@0000000000000000000000000000000000000000",
     )
 
     with pytest.raises(AssertionError, match="ordered workflow step contract"):
@@ -482,8 +552,15 @@ def test_publish_image_validator_rejects_altered_digest_report() -> None:
 def test_publish_image_validator_rejects_alternate_secret_syntax() -> None:
     source = _replace_workflow_once(
         PUBLISH_IMAGE_WORKFLOW.read_text(),
-        "          persist-credentials: false\n",
-        """          persist-credentials: false
+        """      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+""",
+        """      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
           token: ${{ secrets['PACKAGE_TOKEN'] }}
 """,
     )
