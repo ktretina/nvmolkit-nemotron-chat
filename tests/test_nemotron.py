@@ -10,8 +10,10 @@ from app.nemotron import (
     TOOL_SCHEMAS,
     NemotronError,
     NemotronProtocolError,
+    ProviderStatus,
     interpret_result,
     parse_analysis_call,
+    provider_status_for_error,
     select_analysis,
 )
 
@@ -54,6 +56,12 @@ class FakeCompletions:
         if self.error is not None:
             raise self.error
         return self.response
+
+
+class StatusError(RuntimeError):
+    def __init__(self, status_code: int) -> None:
+        super().__init__("raw provider body with nvapi-secret")
+        self.status_code = status_code
 
 
 def client(response: object = None, error: Exception | None = None) -> object:
@@ -153,7 +161,33 @@ def test_select_redacts_client_error() -> None:
     with pytest.raises(NemotronError) as caught:
         select_analysis(fake, "cluster these molecules")
 
+    assert caught.value.provider_status == "provider_unavailable"
     assert "nvapi-secret" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (StatusError(401), "authentication_failed"),
+        (StatusError(403), "authentication_failed"),
+        (StatusError(404), "model_unavailable"),
+        (StatusError(429), "rate_limited"),
+        (StatusError(500), "provider_unavailable"),
+        (TimeoutError("nvapi-secret"), "provider_unavailable"),
+        (RuntimeError("nvapi-secret"), "provider_unavailable"),
+    ],
+)
+def test_provider_errors_map_to_safe_status(
+    error: Exception, expected: ProviderStatus
+) -> None:
+    assert provider_status_for_error(error) == expected
+
+
+def test_protocol_error_is_always_invalid_response_and_secret_safe() -> None:
+    error = NemotronProtocolError("Hosted response violated the bounded protocol")
+
+    assert error.provider_status == "invalid_response"
+    assert "nvapi-" not in str(error)
 
 
 def test_interpretation_payload_uses_summary_and_safe_labels_only() -> None:
@@ -325,7 +359,7 @@ def test_interpretation_request_caps_provider_output_tokens() -> None:
 def test_interpretation_rejects_oversized_returned_text() -> None:
     fake = client(completion(content="x" * 2001))
 
-    with pytest.raises(NemotronError):
+    with pytest.raises(NemotronProtocolError) as caught:
         interpret_result(
             fake,
             AnalysisResult(
@@ -333,6 +367,8 @@ def test_interpretation_rejects_oversized_returned_text() -> None:
             ),
             {"kind": "bar"},
         )
+
+    assert caught.value.provider_status == "invalid_response"
 
 
 def test_interpretation_accepts_2000_character_returned_text() -> None:
@@ -357,7 +393,7 @@ def test_interpretation_accepts_2000_character_returned_text() -> None:
     ],
 )
 def test_interpretation_rejects_blank_or_missing_content(response: object) -> None:
-    with pytest.raises(NemotronError):
+    with pytest.raises(NemotronProtocolError) as caught:
         interpret_result(
             client(response),
             AnalysisResult(
@@ -365,6 +401,8 @@ def test_interpretation_rejects_blank_or_missing_content(response: object) -> No
             ),
             {"kind": "bar", "labels": {"y": "Molecule count"}},
         )
+
+    assert caught.value.provider_status == "invalid_response"
 
 
 def test_interpretation_redacts_client_error() -> None:
@@ -377,4 +415,5 @@ def test_interpretation_redacts_client_error() -> None:
             {"kind": "bar"},
         )
 
+    assert caught.value.provider_status == "provider_unavailable"
     assert "nvapi-secret" not in str(caught.value)

@@ -6,7 +6,7 @@ import copy
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal, TypeAlias
 
 from pydantic import ValidationError
 
@@ -14,12 +14,45 @@ from .config import SETTINGS
 from .models import AnalysisKind, AnalysisParameters, AnalysisResult
 
 
+ProviderStatus: TypeAlias = Literal[
+    "unchecked",
+    "available",
+    "authentication_failed",
+    "rate_limited",
+    "provider_unavailable",
+    "model_unavailable",
+    "invalid_response",
+]
+
+
+def provider_status_for_error(error: Exception) -> ProviderStatus:
+    """Map a provider exception to a category without copying its text."""
+
+    status_code = getattr(error, "status_code", None)
+    if status_code in {401, 403}:
+        return "authentication_failed"
+    if status_code == 404:
+        return "model_unavailable"
+    if status_code == 429:
+        return "rate_limited"
+    return "provider_unavailable"
+
+
 class NemotronError(RuntimeError):
-    """A safe-to-return hosted model failure."""
+    """A categorized, safe-to-return hosted model failure."""
+
+    def __init__(
+        self, provider_status: ProviderStatus, safe_message: str
+    ) -> None:
+        super().__init__(safe_message)
+        self.provider_status = provider_status
 
 
 class NemotronProtocolError(NemotronError):
     """A hosted response that violates the analysis selection protocol."""
+
+    def __init__(self, safe_message: str) -> None:
+        super().__init__("invalid_response", safe_message)
 
 
 TOOL_KINDS: dict[str, AnalysisKind] = {
@@ -143,8 +176,11 @@ def select_analysis(client: object, message: str) -> AnalysisSelection:
     }
     try:
         response = client.chat.completions.create(**request)  # type: ignore[attr-defined]
-    except Exception:
-        raise NemotronError("Hosted analysis selection failed") from None
+    except Exception as error:
+        raise NemotronError(
+            provider_status_for_error(error),
+            "Hosted analysis selection failed",
+        ) from None
     return parse_analysis_call(response)
 
 
@@ -283,15 +319,18 @@ def interpret_result(
     }
     try:
         response = client.chat.completions.create(**request)  # type: ignore[attr-defined]
-    except Exception:
-        raise NemotronError("Hosted interpretation failed") from None
+    except Exception as error:
+        raise NemotronError(
+            provider_status_for_error(error),
+            "Hosted interpretation failed",
+        ) from None
     try:
         content = _field(_message(response), "content")
     except NemotronProtocolError:
-        raise NemotronError("Hosted interpretation returned no text") from None
+        raise
     if not isinstance(content, str) or not content.strip():
-        raise NemotronError("Hosted interpretation returned no text")
+        raise NemotronProtocolError("Hosted interpretation returned no text")
     interpretation = content.strip()
     if len(interpretation) > 2000:
-        raise NemotronError("Hosted interpretation returned too much text")
+        raise NemotronProtocolError("Hosted interpretation returned too much text")
     return interpretation

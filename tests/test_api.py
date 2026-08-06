@@ -504,7 +504,13 @@ def test_same_session_chats_serialize_and_different_sessions_overlap() -> None:
                     active -= 1
 
     engines = [TrackingEngine(), TrackingEngine()]
-    client_one, _, _ = _client(engines, [NemotronError("offline")] * 4)
+    client_one, _, _ = _client(
+        engines,
+        [
+            NemotronError("provider_unavailable", "Hosted provider unavailable")
+        ]
+        * 4,
+    )
     client_two = TestClient(client_one.app, base_url="https://testserver")
     _authenticate(client_one, "one")
     token_one = client_one.cookies["session"]
