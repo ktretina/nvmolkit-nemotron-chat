@@ -26,7 +26,9 @@ if TYPE_CHECKING:
     NvMolKitRuntime: Any
     SETTINGS: Any
     NemotronError: Any
+    ProviderStatus: Any
     interpret_result: Any
+    provider_status_for_error: Any
     select_analysis: Any
     build_cluster_chart: Any
     build_conformer_bundle: Any
@@ -36,7 +38,13 @@ else:
     from .chemistry import AnalysisEngine, NvMolKitRuntime
     from .config import SETTINGS
     from .models import AnalysisKind, AnalysisParameters, AnalysisResult
-    from .nemotron import NemotronError, interpret_result, select_analysis
+    from .nemotron import (
+        NemotronError,
+        ProviderStatus,
+        interpret_result,
+        provider_status_for_error,
+        select_analysis,
+    )
     from .sessions import SessionStore
     from .visualizations import (
         build_cluster_chart,
@@ -66,6 +74,26 @@ _BUILDERS: dict[AnalysisKind, Callable[[Mapping[str, Any]], dict[str, Any]]] = {
     AnalysisKind.SIMILARITY: build_similarity_heatmap,
     AnalysisKind.CLUSTERS: build_cluster_chart,
     AnalysisKind.CONFORMERS: build_conformer_bundle,
+}
+_PROVIDER_HTTP_STATUS: dict[ProviderStatus, int] = {
+    "unchecked": 503,
+    "available": 200,
+    "authentication_failed": 401,
+    "rate_limited": 429,
+    "provider_unavailable": 503,
+    "model_unavailable": 503,
+    "invalid_response": 422,
+}
+_PROVIDER_MESSAGES: dict[ProviderStatus, str] = {
+    "unchecked": "Nemotron has not been checked.",
+    "available": "Nemotron is available.",
+    "authentication_failed": "Nemotron rejected the API key.",
+    "rate_limited": "Nemotron rate-limited the request.",
+    "provider_unavailable": "Nemotron is temporarily unavailable.",
+    "model_unavailable": "The configured Nemotron model is unavailable.",
+    "invalid_response": (
+        "Nemotron returned a response outside the supported bounded analyses."
+    ),
 }
 
 
@@ -133,6 +161,17 @@ def _safe_capability_error() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         detail=_safe_capability_detail(),
+    )
+
+
+def _safe_provider_error(provider_status: ProviderStatus) -> HTTPException:
+    return HTTPException(
+        status_code=_PROVIDER_HTTP_STATUS[provider_status],
+        detail={
+            "message": _PROVIDER_MESSAGES[provider_status],
+            "provider_status": provider_status,
+            "allowed_prompt_ids": list(_ALLOWED_PROMPT_IDS),
+        },
     )
 
 
@@ -219,8 +258,14 @@ def _execute_chat(
             try:
                 client = client_factory(session.api_key_value())
                 selection = select_analysis(client, request.message or "")
-            except Exception:
-                raise _safe_capability_error() from None
+                session.provider_status = "available"
+            except NemotronError as error:
+                session.provider_status = error.provider_status
+                raise _safe_provider_error(error.provider_status) from None
+            except Exception as error:
+                provider_status = provider_status_for_error(error)
+                session.provider_status = provider_status
+                raise _safe_provider_error(provider_status) from None
             kind = selection.kind
             params = selection.params
         try:
@@ -244,17 +289,23 @@ def _execute_chat(
                 client = client_factory(session.api_key_value())
             interpretation = interpret_result(client, result, metadata)
             unavailable = False
-        except NemotronError:
+            session.provider_status = "available"
+        except NemotronError as error:
             interpretation = None
             unavailable = True
-        except Exception:
+            session.provider_status = error.provider_status
+        except Exception as error:
             interpretation = None
             unavailable = True
+            session.provider_status = provider_status_for_error(error)
         visualization["interpretation"] = interpretation
         visualization["interpretation_unavailable"] = unavailable
         # This is the only promotion point: analysis and visualization are valid.
         session.latest_visualization = copy.deepcopy(visualization)
-        return {"visualization": copy.deepcopy(visualization)}
+        return {
+            "visualization": copy.deepcopy(visualization),
+            "provider_status": session.provider_status,
+        }
 
 
 def create_app(

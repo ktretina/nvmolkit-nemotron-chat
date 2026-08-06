@@ -138,6 +138,12 @@ class FakeCompletions:
         return response
 
 
+class StatusError(RuntimeError):
+    def __init__(self, status_code: int) -> None:
+        super().__init__("raw provider body with nvapi-secret")
+        self.status_code = status_code
+
+
 class ClientFactory:
     def __init__(self, responses: list[object | Exception]) -> None:
         self.completions = FakeCompletions(responses)
@@ -192,6 +198,8 @@ def test_suggested_similarity_bypasses_selection_and_runs_exact_kind() -> None:
 
     assert response.status_code == 200
     assert response.json()["visualization"]["kind"] == "similarity"
+    assert response.json()["provider_status"] == "available"
+    assert client.get("/api/session").json()["provider_status"] == "available"
     assert [call[0] for call in engine.calls] == [AnalysisKind.SIMILARITY]
     assert len(factory.completions.requests) == 1
     assert "tools" not in factory.completions.requests[0]
@@ -260,7 +268,38 @@ def test_interpretation_failure_keeps_new_visualization_and_marks_unavailable() 
     assert visual["kind"] == "fingerprint_density"
     assert visual["interpretation"] is None
     assert visual["interpretation_unavailable"] is True
+    assert response.json()["provider_status"] == "provider_unavailable"
     assert client.get("/api/session").json()["visualization"] == visual
+    assert (
+        client.get("/api/session").json()["provider_status"]
+        == "provider_unavailable"
+    )
+
+
+@pytest.mark.parametrize(
+    ("error", "http_status", "provider_status"),
+    [
+        (StatusError(401), 401, "authentication_failed"),
+        (StatusError(429), 429, "rate_limited"),
+        (StatusError(404), 503, "model_unavailable"),
+        (RuntimeError("raw nvapi-secret"), 503, "provider_unavailable"),
+    ],
+)
+def test_freeform_provider_failure_is_safe_and_runs_no_chemistry(
+    error: Exception, http_status: int, provider_status: str
+) -> None:
+    engine = FakeEngine()
+    client, _, _ = _client([engine], [error])
+    _authenticate(client)
+
+    response = client.post("/api/chat", json={"message": "show similarity"})
+
+    assert response.status_code == http_status
+    assert response.json()["detail"]["provider_status"] == provider_status
+    assert client.get("/api/session").json()["provider_status"] == provider_status
+    assert engine.calls == []
+    assert SECRET not in response.text
+    assert "raw" not in response.text
 
 
 def test_session_cookie_security_secrecy_get_delete_and_expiry() -> None:
@@ -417,6 +456,7 @@ def test_unsupported_selection_is_safe_and_lists_capabilities() -> None:
 
     assert response.status_code == 422
     payload = response.json()
+    assert payload["detail"]["provider_status"] == "invalid_response"
     assert set(payload["detail"]["allowed_prompt_ids"]) == ALLOWED_PROMPTS
     assert "supported" in payload["detail"]["message"].lower()
     serialized = json.dumps(payload)
@@ -441,7 +481,8 @@ def test_client_factory_failure_is_safe_and_does_not_expose_key() -> None:
 
     response = client.post("/api/chat", json={"message": "show similarity"})
 
-    assert response.status_code == 422
+    assert response.status_code == 503
+    assert response.json()["detail"]["provider_status"] == "provider_unavailable"
     assert SECRET not in response.text
 
 
