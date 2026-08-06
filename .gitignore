@@ -14,5 +14,8 @@ build/
 __pycache__/
 *.py[cod]
 .venv/
+*.egg-info/
+test-results/
+playwright-report/
 .superpowers/
 .worktrees/
