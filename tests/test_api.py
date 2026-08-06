@@ -271,7 +271,10 @@ def test_session_cookie_security_secrecy_get_delete_and_expiry() -> None:
 
     created = client.post("/api/session/key", json={"api_key": SECRET})
 
-    assert created.json() == {"authenticated": True}
+    assert created.json() == {
+        "authenticated": True,
+        "provider_status": "unchecked",
+    }
     assert SECRET not in created.text and SECRET not in repr(created.json())
     cookie = created.headers["set-cookie"].lower()
     assert all(
@@ -281,6 +284,7 @@ def test_session_cookie_security_secrecy_get_delete_and_expiry() -> None:
     assert client.get("/api/session").json() == {
         "authenticated": True,
         "visualization": None,
+        "provider_status": "unchecked",
     }
     token = client.cookies["session"]
     assert SECRET not in repr(store) and SECRET not in repr(store.get(token))
@@ -288,6 +292,7 @@ def test_session_cookie_security_secrecy_get_delete_and_expiry() -> None:
     assert client.get("/api/session").json() == {
         "authenticated": False,
         "visualization": None,
+        "provider_status": "unchecked",
     }
     deleted = client.delete("/api/session")
     assert deleted.json() == {"authenticated": False}
@@ -296,6 +301,40 @@ def test_session_cookie_security_secrecy_get_delete_and_expiry() -> None:
         flag in cleared for flag in ("httponly", "secure", "samesite=strict", "path=/")
     )
     assert factory.keys == []
+
+
+def test_reset_preserves_authentication_and_clears_workspace() -> None:
+    first = FakeEngine()
+    second = FakeEngine()
+    client, _, store = _client(
+        [first, second], [_completion(content="Ready.")]
+    )
+    _authenticate(client)
+    token = client.cookies["session"]
+    assert client.post(
+        "/api/chat", json={"prompt_id": "similarity"}
+    ).status_code == 200
+
+    response = client.post("/api/session/reset")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "authenticated": True,
+        "visualization": None,
+        "provider_status": "unchecked",
+    }
+    assert client.cookies["session"] == token
+    current = store.get(token)
+    assert current is not None
+    assert current.api_key_value() == SECRET
+    assert current.engine is second
+    assert current.latest_visualization is None
+
+
+def test_reset_requires_a_live_session() -> None:
+    client, _, _ = _client([], [])
+
+    assert client.post("/api/session/reset").status_code == 401
 
 
 def test_key_rotation_then_logout_revokes_old_and_new_sessions() -> None:
@@ -549,6 +588,7 @@ def test_app_exposes_only_required_api_routes() -> None:
     assert {path for path in paths if path.startswith("/api/")} == {
         "/api/session/key",
         "/api/session",
+        "/api/session/reset",
         "/api/chat",
         "/api/health",
     }

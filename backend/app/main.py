@@ -328,7 +328,7 @@ def create_app(
         request: ApiKeyRequest,
         response: Response,
         session: Annotated[str | None, Cookie()] = None,
-    ) -> dict[str, bool]:
+    ) -> dict[str, Any]:
         token = store.create(request.api_key)
         if session:
             store.delete(session)
@@ -341,19 +341,43 @@ def create_app(
             samesite="strict",
             path="/",
         )
-        return {"authenticated": True}
+        return {"authenticated": True, "provider_status": "unchecked"}
 
     @app.get("/api/session")
     def get_session(session: Annotated[str | None, Cookie()] = None) -> dict[str, Any]:
         if not session:
-            return {"authenticated": False, "visualization": None}
+            return {
+                "authenticated": False,
+                "visualization": None,
+                "provider_status": "unchecked",
+            }
         with store.lease(session) as current:
             if current is None:
-                return {"authenticated": False, "visualization": None}
+                return {
+                    "authenticated": False,
+                    "visualization": None,
+                    "provider_status": "unchecked",
+                }
             return {
                 "authenticated": True,
                 "visualization": copy.deepcopy(current.latest_visualization),
+                "provider_status": current.provider_status,
             }
+
+    @app.post("/api/session/reset")
+    def reset_session(
+        session: Annotated[str | None, Cookie()] = None,
+    ) -> dict[str, Any]:
+        if not session or not store.reset(session):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required",
+            )
+        return {
+            "authenticated": True,
+            "visualization": None,
+            "provider_status": "unchecked",
+        }
 
     @app.delete("/api/session")
     def delete_session(

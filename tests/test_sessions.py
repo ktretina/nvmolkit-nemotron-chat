@@ -100,6 +100,55 @@ def test_session_contains_only_live_server_state() -> None:
     assert session.api_key_value() == "key"
     assert session.engine is engine
     assert session.latest_visualization is None
+    assert session.provider_status == "unchecked"
+
+
+def test_reset_replaces_analysis_state_but_preserves_key_and_token() -> None:
+    engines = iter([object(), object()])
+    store = SessionStore(lambda: next(engines))
+    token = store.create("nvapi-secret")
+    before = store.get(token)
+    assert before is not None
+    old_engine = before.engine
+    before.latest_visualization = {"kind": "similarity"}
+    before.provider_status = "available"
+
+    assert store.reset(token) is True
+
+    after = store.get(token)
+    assert after is before
+    assert after.api_key_value() == "nvapi-secret"
+    assert after.engine is not old_engine
+    assert after.latest_visualization is None
+    assert after.provider_status == "unchecked"
+
+
+def test_reset_missing_or_expired_session_is_false() -> None:
+    clock = Clock()
+    store = SessionStore(lambda: object(), clock=clock, idle_seconds=10)
+    token = store.create("key")
+    clock.now += 11
+
+    assert store.reset(token) is False
+    assert store.reset("missing") is False
+
+
+def test_reset_waits_for_an_active_session_lease() -> None:
+    store = SessionStore(lambda: object())
+    token = store.create("key")
+    reset_started = threading.Event()
+
+    def reset() -> bool:
+        reset_started.set()
+        return store.reset(token)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with store.lease(token) as session:
+            assert session is not None
+            future = pool.submit(reset)
+            assert reset_started.wait(timeout=1)
+            assert not future.done()
+        assert future.result(timeout=1) is True
 
 
 def test_session_serializers_never_expose_raw_key() -> None:

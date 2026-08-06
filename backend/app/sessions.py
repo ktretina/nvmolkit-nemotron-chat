@@ -18,6 +18,7 @@ from pydantic import SecretStr
 
 from .chemistry import AnalysisEngine
 from .config import SETTINGS
+from .nemotron import ProviderStatus
 
 
 @dataclass
@@ -28,6 +29,7 @@ class Session:
     touched_at: float
     engine: AnalysisEngine
     latest_visualization: dict[str, Any] | None = None
+    provider_status: ProviderStatus = "unchecked"
     _lock: ClassVar[threading.RLock]
     _active_leases: ClassVar[int]
 
@@ -107,6 +109,18 @@ class SessionStore:
                 self._prune(self._clock())
                 if self._sessions.get(token) is session:
                     self._sessions.pop(token, None)
+
+    def reset(self, token: str) -> bool:
+        """Clear one workspace while preserving its credential and token."""
+
+        with self.lease(token) as session:
+            if session is None:
+                return False
+            engine = self._engine_factory()
+            session.engine = engine
+            session.latest_visualization = None
+            session.provider_status = "unchecked"
+            return True
 
     @contextmanager
     def lease(self, token: str) -> Iterator[Session | None]:
