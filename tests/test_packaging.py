@@ -18,19 +18,22 @@ import yaml  # type: ignore[import-untyped]
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLISH_IMAGE_WORKFLOW = ROOT / ".github" / "workflows" / "publish-image.yml"
-APP_IMAGE_BUILD_COMMIT = "7b82e3722075acad4868896716c1eb66ac642f65"
-APP_IMAGE_BUILD_RUN = "31126921793"
-IMAGE_BACKED_COMPOSE_COMMIT = "80157583aeb19e6b20f4bb259336806d9a2e3fc1"
+APP_IMAGE_BUILD_COMMIT = "287e907ded4ba68e6c5db829da9e6e07357f60bb"
+APP_IMAGE_BUILD_RUN = "31137134719"
 APP_IMAGE = (
     "ghcr.io/ktretina/nvmolkit-nemotron-chat@"
-    "sha256:1911d4eae820fad11b5aac8634fefcc69557ace82194870e2711896c134d2a08"
+    "sha256:278d4dacdedfae6c05d7effb28fa9c1d745262424a88e85696c363e17bba0afe"
 )
 APP_AMD64_MANIFEST = (
-    "sha256:7141d8c9cba22b473a064846f30f865bed3840a0b53bc386472d8bdb41cc05de"
+    "sha256:756654333de037ab093cc6e12063469a9cdea8f32ae6ce1f388fd53246f753d9"
 )
-APP_AMD64_COMPRESSED_BYTES = "4,201,723,821 bytes"
-APP_AMD64_COMPRESSED_GIB = "3.9131602468 GiB"
 STALE_IMAGE_EVIDENCE = (
+    "31126921793",
+    "7b82e3722075acad4868896716c1eb66ac642f65",
+    "sha256:1911d4eae820fad11b5aac8634fefcc69557ace82194870e2711896c134d2a08",
+    "sha256:7141d8c9cba22b473a064846f30f865bed3840a0b53bc386472d8bdb41cc05de",
+    "4,201,723,821 bytes",
+    "3.9131602468 GiB",
     "31048410625",
     "572241e9bc9cf49f2614f8ef5a2566f54b831645",
     "sha256:10c8297827ed96bce8f413986cec13e77b2b266555527c1f21e425082d0fec88",
@@ -582,12 +585,7 @@ def test_deployment_docs_pin_image_source_and_preserve_architecture_limits() -> 
     assert APP_IMAGE_BUILD_RUN in launchable
     assert APP_IMAGE in launchable
     assert APP_AMD64_MANIFEST in launchable
-    assert APP_AMD64_COMPRESSED_BYTES in launchable
-    assert APP_AMD64_COMPRESSED_GIB in launchable
-    assert (
-        f"https://github.com/ktretina/nvmolkit-nemotron-chat/blob/"
-        f"{IMAGE_BACKED_COMPOSE_COMMIT}/deployment/compose.yaml"
-    ) in launchable
+    assert "No immutable URL is claimed before the metadata commit exists remotely" in launchable
     assert "repository-root build context" not in launchable_lower
     assert "pending" in launchable_lower
     assert "unqualified" in launchable_lower
@@ -600,17 +598,17 @@ def test_deployment_docs_pin_image_source_and_preserve_architecture_limits() -> 
     assert "No public TCP or UDP ports" in launchable
     assert "No Launchable variable or environment default" in launchable
     assert re.search(
-        r"live runtime[^.\n]*\bpending\b",
+        r"live runtime[^.\n]*\bpass\b",
         launchable_lower,
-    ), "live runtime qualification must be explicitly pending"
+    ), "existing-instance live runtime qualification must be explicitly passed"
     assert re.search(
         r"fresh deployment[^.\n]*\bpending\b",
         launchable_lower,
     ), "fresh deployment qualification must be explicitly pending"
     assert re.search(
-        r"hosted nemotron[^.\n]*\bpending\b",
+        r"hosted nemotron[^.\n]*\bpartial\b",
         launchable_lower,
-    ), "hosted Nemotron qualification must be explicitly pending"
+    ), "hosted Nemotron qualification must be explicitly partial"
     assert re.search(
         r"browser/ui acceptance[^.\n]*\bpending\b",
         launchable_lower,
@@ -624,8 +622,6 @@ def test_deployment_docs_pin_image_source_and_preserve_architecture_limits() -> 
     assert APP_IMAGE_BUILD_COMMIT in readme
     assert APP_IMAGE in readme
     assert APP_AMD64_MANIFEST in readme
-    assert APP_AMD64_COMPRESSED_BYTES in readme
-    assert APP_AMD64_COMPRESSED_GIB in readme
     assert "CI Linux/amd64 image build and push succeeded" in readme
     assert "The Docker build" not in readme
     assert "immutable deployment" in readme.lower()

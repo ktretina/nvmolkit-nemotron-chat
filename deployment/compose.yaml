@@ -1,6 +1,6 @@
 services:
   app:
-    image: ghcr.io/ktretina/nvmolkit-nemotron-chat@sha256:1911d4eae820fad11b5aac8634fefcc69557ace82194870e2711896c134d2a08
+    image: ghcr.io/ktretina/nvmolkit-nemotron-chat@sha256:278d4dacdedfae6c05d7effb28fa9c1d745262424a88e85696c363e17bba0afe
     environment:
       TRITON_CACHE_DIR: /tmp/triton-cache
     ports:

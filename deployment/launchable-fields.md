@@ -1,16 +1,16 @@
 # Brev Console fields
 
-The corrected browser-gated application image is published and pinned by a local immutable Compose anchor. Live runtime, GPU acceptance, hosted Nemotron, Secure Link browser acceptance, and a separately authorized fresh deployment remain pending.
+The corrected similarity-heatmap image is published and has passed runtime, GPU, and targeted Secure Link acceptance on the existing pinned L4 instance. The local Compose now names that immutable image. The Brev Launchable definition, full nine-step browser flow, and a separately authorized fresh deployment remain pending.
 
 - **Name:** `nvMolKit Nemotron Chat`.
 - **Description:** A GPU molecular-analysis chat demo with four bounded nvMolKit workflows, hosted Nemotron interpretation, and labeled 2D/3D visuals over bundled data.
 - **Runtime mode:** Docker Compose.
 - **Public repository:** `https://github.com/ktretina/nvmolkit-nemotron-chat`.
-- **Image-build run:** GitHub Actions run [`31126921793`](https://github.com/ktretina/nvmolkit-nemotron-chat/actions/runs/31126921793), attempt 1, `success`.
-- **Image-build commit:** `7b82e3722075acad4868896716c1eb66ac642f65`.
-- **Application image:** `ghcr.io/ktretina/nvmolkit-nemotron-chat@sha256:1911d4eae820fad11b5aac8634fefcc69557ace82194870e2711896c134d2a08`.
-- **Linux/amd64 manifest:** `sha256:7141d8c9cba22b473a064846f30f865bed3840a0b53bc386472d8bdb41cc05de`; compressed layer payload: 4,201,723,821 bytes (3.9131602468 GiB).
-- **Compose source/resource:** After the approved Phase B push and exact remote readback, use `https://github.com/ktretina/nvmolkit-nemotron-chat/blob/80157583aeb19e6b20f4bb259336806d9a2e3fc1/deployment/compose.yaml`. Commit `80157583aeb19e6b20f4bb259336806d9a2e3fc1` is the local immutable Compose anchor; the file is image-backed and does not build from a checked-out repository. Do not use the URL until that commit is confirmed on the remote.
+- **Image-build run:** GitHub Actions run [`31137134719`](https://github.com/ktretina/nvmolkit-nemotron-chat/actions/runs/31137134719), attempt 1, `success`.
+- **Image-build commit:** `287e907ded4ba68e6c5db829da9e6e07357f60bb`.
+- **Application image:** `ghcr.io/ktretina/nvmolkit-nemotron-chat@sha256:278d4dacdedfae6c05d7effb28fa9c1d745262424a88e85696c363e17bba0afe`.
+- **Linux/amd64 manifest:** `sha256:756654333de037ab093cc6e12063469a9cdea8f32ae6ce1f388fd53246f753d9`.
+- **Compose source/resource:** Commit this local digest update only after approval, push that exact commit, verify its remote SHA, and then use its commit-pinned `deployment/compose.yaml` URL. The file is image-backed and does not build from a checked-out repository. No immutable URL is claimed before the metadata commit exists remotely.
 - **Architecture:** Linux x86-64 (`linux/amd64`).
 - **Hardware:** Exactly one NVIDIA L4 GPU.
 - **Disk:** 50 GiB.
@@ -23,13 +23,14 @@ The corrected browser-gated application image is published and pinned by a local
 
 - **Image build and immutable registry identity:** PASS.
 - **Local browser-gated CI verification:** PASS.
-- **Live runtime qualification:** PENDING.
-- **GPU acceptance on the exact L4 deployment:** PENDING.
-- **Hosted Nemotron qualification:** PENDING.
-- **Browser/UI acceptance through the Secure Link:** PENDING.
+- **Live runtime qualification on existing instance `he8b2ekuh`:** PASS.
+- **GPU acceptance on that exact L4 deployment:** PASS for all four deterministic analyses.
+- **Hosted Nemotron qualification:** PARTIAL; the suggested similarity workflow returned a substantive interpretation, but free-form routing remains pending.
+- **Targeted similarity browser acceptance through the Secure Link:** PASS.
+- **Full nine-step browser/UI acceptance:** PENDING.
 - **Fresh deployment qualification:** PENDING.
-- **Immutable deployment qualification:** PENDING.
+- **Launchable-generated immutable deployment qualification:** PENDING.
 
-**Blocking acceptance gate:** After the Phase B commits are separately approved, pushed, and read back, the controller must use the exact immutable Compose anchor above for the confirmed Launchable. A separately authorized fresh instance must then prove the resolved organization, Launchable ID, instance ID, provider, L4 SKU, image index and Linux/amd64 manifest, CUDA/nvMolKit runtime, all four deterministic analyses, hosted Nemotron routing/interpretation, session reset/end behavior, populated conformer controls, visible figures, Secure Link browser behavior, and zero confirmed credentials in submitted configuration, runtime logs, and evidence artifacts.
+**Blocking acceptance gate:** After this metadata change is separately approved, committed, pushed, and read back, the controller must use that exact immutable Compose anchor for Launchable `env-3HVH6EJJaIzVc6RYjBqUoYmw1gu`. A separately authorized fresh instance must then prove the resolved organization, Launchable ID, instance ID, provider, L4 SKU, image index and Linux/amd64 manifest, CUDA/nvMolKit runtime, all four deterministic analyses, hosted Nemotron routing/interpretation, session reset/end behavior, populated conformer controls, visible figures, Secure Link browser behavior, and zero confirmed credentials in submitted configuration, runtime logs, and evidence artifacts.
 
-Until those gates pass, the new artifact is **UNQUALIFIED** as a live deployment. Do not copy a credential into the repository, Compose file, Launchable defaults, logs, screenshots, or acceptance receipt. Local handoff metadata is not a Brev Console or platform mutation.
+Until those gates pass, the existing manually updated instance is qualified only for the recorded runtime/GPU and targeted similarity checks; the Launchable remains **UNQUALIFIED** as a reproducible fresh deployment. Do not copy a credential into the repository, Compose file, Launchable defaults, logs, screenshots, or acceptance receipt. Local handoff metadata is not a Brev Console or platform mutation.
