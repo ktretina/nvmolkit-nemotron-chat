@@ -89,18 +89,83 @@ def test_similarity_heatmap_has_axes_scale_and_aligned_id_hover() -> None:
         {"molecule_ids": ["CHEMBL1", "CHEMBL2"], "matrix": [[1.0, 0.4], [0.4, 1.0]]}
     )
     trace = graph["data"][0]
+    layout = graph["layout"]
 
     assert graph["kind"] == "similarity"
     assert _layout_titles(graph) == (
         "Pairwise molecular similarity",
-        "Molecule index — bundled ChEMBL set",
-        "Molecule index — bundled ChEMBL set",
+        "Bundled ChEMBL molecule",
+        "Bundled ChEMBL molecule",
     )
     assert trace["x"] == ["CHEMBL1", "CHEMBL2"]
     assert trace["y"] == ["CHEMBL1", "CHEMBL2"]
+    assert trace["z"] == [[1.0, 0.4], [0.4, 1.0]]
     assert (trace["zmin"], trace["zmax"]) == (0, 1)
-    assert trace["colorbar"]["title"]["text"] == "Tanimoto similarity — unitless, 0 to 1"
+    assert trace["colorbar"] == {
+        "title": {"text": "Tanimoto<br>similarity", "side": "top"},
+        "tickmode": "array",
+        "tickvals": [0, 0.5, 1],
+        "ticktext": ["0", "0.5", "1"],
+        "x": 0.84,
+        "xanchor": "left",
+        "xpad": 8,
+        "y": 0.5,
+        "yanchor": "middle",
+        "len": 0.76,
+        "thickness": 18,
+    }
+    assert layout["xaxis"]["tickvals"] == ["CHEMBL1", "CHEMBL2"]
+    assert layout["yaxis"]["tickvals"] == ["CHEMBL1", "CHEMBL2"]
     assert "%{x}" in trace["hovertemplate"] and "%{y}" in trace["hovertemplate"]
+
+
+def test_similarity_heatmap_sparsifies_256_ticks_without_sparsifying_data() -> None:
+    ids = [f"CHEMBL{index:04d}" for index in range(256)]
+    matrix = [
+        [1.0 if row == column else 0.2 for column in range(256)]
+        for row in range(256)
+    ]
+    graph = build_similarity_heatmap({"molecule_ids": ids, "matrix": matrix})
+    layout = graph["layout"]
+    expected_ticks = [ids[round(index * 255 / 7)] for index in range(8)]
+
+    assert layout["xaxis"] == {
+        "title": {"text": "Bundled ChEMBL molecule"},
+        "tickmode": "array",
+        "tickvals": expected_ticks,
+        "ticktext": expected_ticks,
+        "tickangle": -45,
+        "automargin": True,
+        "constrain": "domain",
+        "domain": [0, 0.8],
+    }
+    assert layout["yaxis"] == {
+        "title": {"text": "Bundled ChEMBL molecule"},
+        "tickmode": "array",
+        "tickvals": expected_ticks,
+        "ticktext": expected_ticks,
+        "automargin": True,
+        "scaleanchor": "x",
+        "scaleratio": 1,
+        "constrain": "domain",
+    }
+    assert layout["margin"] == {"l": 104, "r": 96, "t": 58, "b": 112, "pad": 4}
+    assert graph["data"][0]["x"] == ids
+    assert graph["data"][0]["y"] == ids
+    assert graph["data"][0]["z"] == matrix
+
+
+@pytest.mark.parametrize("count", range(1, 9))
+def test_similarity_heatmap_keeps_every_tick_for_small_inputs(count: int) -> None:
+    ids = [f"CHEMBL{index}" for index in range(count)]
+    matrix = [
+        [1.0 if row == column else 0.2 for column in range(count)]
+        for row in range(count)
+    ]
+    graph = build_similarity_heatmap({"molecule_ids": ids, "matrix": matrix})
+
+    assert graph["layout"]["xaxis"]["tickvals"] == ids
+    assert graph["layout"]["yaxis"]["tickvals"] == ids
 
 
 @pytest.mark.parametrize(

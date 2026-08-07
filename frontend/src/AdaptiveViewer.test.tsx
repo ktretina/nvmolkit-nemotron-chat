@@ -35,8 +35,9 @@ const similarity = {
   data: [{ type: "heatmap", z: [[1]], x: ["CHEMBL1"], y: ["CHEMBL1"] }],
   layout: {
     title: { text: "Pairwise molecular similarity" },
-    xaxis: { title: { text: "Molecule index — bundled ChEMBL set" } },
-    yaxis: { title: { text: "Molecule index — bundled ChEMBL set" } },
+    xaxis: { title: { text: "Bundled ChEMBL molecule" } },
+    yaxis: { title: { text: "Bundled ChEMBL molecule" } },
+    margin: { l: 104 },
   },
 };
 
@@ -113,14 +114,26 @@ it("passes labeled axes to Plotly for a two-dimensional result", () => {
   expect(pane).not.toHaveClass("is-active");
   expect(plotly).toHaveBeenCalledWith(expect.objectContaining({
     layout: expect.objectContaining({
-      xaxis: { title: { text: "Molecule index — bundled ChEMBL set" } },
-      yaxis: { title: { text: "Molecule index — bundled ChEMBL set" } },
+      xaxis: { title: { text: "Bundled ChEMBL molecule" } },
+      yaxis: { title: { text: "Bundled ChEMBL molecule" } },
     }),
   }));
   expect(screen.getByRole("figure", { name: /pairwise molecular similarity/i })).toHaveAccessibleDescription(
-    "X axis: Molecule index — bundled ChEMBL set. Y axis: Molecule index — bundled ChEMBL set.",
+    "X axis: Bundled ChEMBL molecule. Y axis: Bundled ChEMBL molecule.",
   );
+  expect(screen.getByRole("figure", { name: /pairwise molecular similarity/i }))
+    .toHaveClass("plot-frame--similarity");
   expect(screen.queryByRole("combobox", { name: /^conformer$/i })).not.toBeInTheDocument();
+});
+
+it("merges graph-specific margins over the shared Plotly defaults", () => {
+  render(<AdaptiveViewer visualization={similarity} />);
+
+  expect(plotly).toHaveBeenCalledWith(expect.objectContaining({
+    layout: expect.objectContaining({
+      margin: { l: 104, r: 32, t: 58, b: 72 },
+    }),
+  }));
 });
 
 it("shows 3D controls and keeps the labeled energy graph for conformers", () => {

@@ -65,6 +65,18 @@ def build_fingerprint_histogram(
     return _validated_json(graph)
 
 
+def _sparse_axis_ticks(identifiers: Sequence[str], *, maximum: int = 8) -> list[str]:
+    """Return ordered, inclusive, evenly spaced labels for a categorical axis."""
+
+    if len(identifiers) <= maximum:
+        return list(identifiers)
+    last_index = len(identifiers) - 1
+    return [
+        identifiers[round(tick_index * last_index / (maximum - 1))]
+        for tick_index in range(maximum)
+    ]
+
+
 def build_similarity_heatmap(
     artifact_or_matrix: Mapping[str, Any] | Sequence[Any] | None = None,
     molecule_ids: Sequence[Any] | None = None,
@@ -96,11 +108,12 @@ def build_similarity_heatmap(
             raise ValueError("Tanimoto similarities must be between 0 and 1")
         values.append(row_values)
 
+    tick_values = _sparse_axis_ticks(id_values)
     graph = _plotly_graph(
         kind="similarity",
         title="Pairwise molecular similarity",
-        x_title="Molecule index — bundled ChEMBL set",
-        y_title="Molecule index — bundled ChEMBL set",
+        x_title="Bundled ChEMBL molecule",
+        y_title="Bundled ChEMBL molecule",
         trace={
             "type": "heatmap",
             "z": values,
@@ -109,12 +122,45 @@ def build_similarity_heatmap(
             "zmin": 0,
             "zmax": 1,
             "colorbar": {
-                "title": {"text": "Tanimoto similarity — unitless, 0 to 1"}
+                "title": {"text": "Tanimoto<br>similarity", "side": "top"},
+                "tickmode": "array",
+                "tickvals": [0, 0.5, 1],
+                "ticktext": ["0", "0.5", "1"],
+                "x": 0.84,
+                "xanchor": "left",
+                "xpad": 8,
+                "y": 0.5,
+                "yanchor": "middle",
+                "len": 0.76,
+                "thickness": 18,
             },
             "hovertemplate": (
                 "ChEMBL row %{y}<br>ChEMBL column %{x}<br>"
                 "Tanimoto similarity: %{z:.3f}<extra></extra>"
             ),
+        },
+    )
+    graph["layout"].update(
+        margin={"l": 104, "r": 96, "t": 58, "b": 112, "pad": 4},
+        xaxis={
+            "title": {"text": "Bundled ChEMBL molecule"},
+            "tickmode": "array",
+            "tickvals": tick_values,
+            "ticktext": tick_values,
+            "tickangle": -45,
+            "automargin": True,
+            "constrain": "domain",
+            "domain": [0, 0.8],
+        },
+        yaxis={
+            "title": {"text": "Bundled ChEMBL molecule"},
+            "tickmode": "array",
+            "tickvals": tick_values,
+            "ticktext": tick_values,
+            "automargin": True,
+            "scaleanchor": "x",
+            "scaleratio": 1,
+            "constrain": "domain",
         },
     )
     return _validated_json(graph)

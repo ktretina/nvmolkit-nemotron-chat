@@ -107,6 +107,7 @@ h1, h2, p { margin-top: 0; }
 .viewer-empty span { color: #76b900; font-size: 2rem; }
 .viewer-empty h2 { margin: 14px 0 6px; }
 .plot-frame { width: 100%; min-height: 58vh; margin: 0; }
+.plot-frame--similarity { min-height: 0; aspect-ratio: 1.25; }
 .conformer-pane { display: grid; grid-template-rows: auto minmax(320px, 48vh) auto minmax(280px, auto); min-height: 100%; }
 .conformer-pane[hidden] { display: none; }
 .viewer-controls { display: flex; flex-wrap: wrap; gap: 12px; padding: 16px 20px; border-bottom: 1px solid #242a32; }

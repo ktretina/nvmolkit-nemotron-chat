@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import re
 import threading
 from collections.abc import Callable, Mapping
 from concurrent.futures import Executor, ThreadPoolExecutor
@@ -61,6 +62,8 @@ NonBlankKey = Annotated[
 NonBlankMessage = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)
 ]
+
+_PLOTLY_LINE_BREAK = re.compile(r"<br\s*/?>", re.IGNORECASE)
 
 _PROMPT_KINDS: dict[PromptId, AnalysisKind] = {
     "fingerprints": AnalysisKind.FINGERPRINT_DENSITY,
@@ -195,7 +198,10 @@ def _textual_metadata(visualization: Mapping[str, Any]) -> dict[str, Any]:
         if not isinstance(container, Mapping):
             return None
         value = container.get("text")
-        return value if isinstance(value, str) and value else None
+        if not isinstance(value, str):
+            return None
+        normalized = " ".join(_PLOTLY_LINE_BREAK.sub(" ", value).split())
+        return normalized or None
 
     metadata: dict[str, Any] = {"kind": str(visualization["kind"])}
     graph_title = title(layout.get("title"))

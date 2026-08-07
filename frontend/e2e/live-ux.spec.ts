@@ -1,20 +1,64 @@
 import { expect, test, type Page } from "@playwright/test";
 
+const similarityIds = Array.from({ length: 256 }, (_, index) => `CHEMBL${String(index).padStart(4, "0")}`);
+const similarityTicks = Array.from(
+  { length: 8 },
+  (_, index) => similarityIds[Math.round(index * 255 / 7)],
+);
+const similarityMatrix = similarityIds.map((_, row) => similarityIds.map((__, column) => (
+  row === column
+    ? 1
+    : Number((0.08 + 0.24 * Math.exp(-Math.abs(row - column) / 24)).toFixed(3))
+)));
+
 const similarity = {
   kind: "similarity",
   data: [{
     type: "heatmap",
-    z: [[1, 0.42], [0.42, 1]],
-    x: ["CHEMBL1", "CHEMBL2"],
-    y: ["CHEMBL1", "CHEMBL2"],
-    colorbar: { title: { text: "Tanimoto similarity (unitless)" } },
+    z: similarityMatrix,
+    x: similarityIds,
+    y: similarityIds,
+    zmin: 0,
+    zmax: 1,
+    colorbar: {
+      title: { text: "Tanimoto<br>similarity", side: "top" },
+      tickmode: "array",
+      tickvals: [0, 0.5, 1],
+      ticktext: ["0", "0.5", "1"],
+      x: 0.84,
+      xanchor: "left",
+      xpad: 8,
+      y: 0.5,
+      yanchor: "middle",
+      len: 0.76,
+      thickness: 18,
+    },
   }],
   layout: {
     title: { text: "Pairwise molecular similarity" },
-    xaxis: { title: { text: "Molecule index — bundled ChEMBL set" } },
-    yaxis: { title: { text: "Molecule index — bundled ChEMBL set" } },
+    margin: { l: 104, r: 96, t: 58, b: 112, pad: 4 },
+    xaxis: {
+      title: { text: "Bundled ChEMBL molecule" },
+      tickmode: "array",
+      tickvals: similarityTicks,
+      ticktext: similarityTicks,
+      tickangle: -45,
+      automargin: true,
+      constrain: "domain",
+      domain: [0, 0.8],
+    },
+    yaxis: {
+      title: { text: "Bundled ChEMBL molecule" },
+      tickmode: "array",
+      tickvals: similarityTicks,
+      ticktext: similarityTicks,
+      automargin: true,
+      scaleanchor: "x",
+      scaleratio: 1,
+      constrain: "domain",
+    },
   },
-  interpretation: "The bundled set contains two self-matches.",
+  interpretation: "The bundled set contains 256 compounds with exact pairwise scores.",
   interpretation_unavailable: false,
 };
 
@@ -88,6 +132,15 @@ const prompts = {
   conformers: "Generate and compare optimized 3D conformers for representative molecules.",
 };
 
+type Box = { x: number; y: number; width: number; height: number };
+
+function boxesOverlap(first: Box, second: Box): boolean {
+  return first.x < second.x + second.width
+    && first.x + first.width > second.x
+    && first.y < second.y + second.height
+    && first.y + first.height > second.y;
+}
+
 async function mockApi(page: Page) {
   let authenticated = true;
   let visualization: typeof similarity | typeof conformers | null = null;
@@ -134,16 +187,49 @@ test.beforeEach(async ({ page }) => {
   await mockApi(page);
 });
 
-test("keeps the composer and a 2D figure inside the desktop viewport", async ({ page }) => {
+test("keeps the composer and a 2D figure inside the desktop viewport", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1563, height: 1103 });
   await page.goto("/");
 
   await expect(page.getByLabel("Ask about the bundled molecules")).toBeInViewport();
   await page.getByRole("button", { name: prompts.similarity }).click();
 
-  await expect(page.getByRole("figure", {
-    name: /Pairwise molecular similarity/,
-  })).toBeInViewport();
+  const figure = page.getByRole("figure", { name: /Pairwise molecular similarity/ });
+  await expect(figure).toBeInViewport();
+  const xTicks = figure.locator(".xaxislayer-above .xtick text");
+  const yTicks = figure.locator(".yaxislayer-above .ytick text");
+  await expect(xTicks).toHaveCount(8);
+  await expect(yTicks).toHaveCount(8);
+  await expect(xTicks).toHaveText(similarityTicks);
+  await expect(yTicks).toHaveText(similarityTicks);
+
+  const xTickBoxes = await xTicks.evaluateAll((elements) => elements.map((element) => {
+    const box = element.getBoundingClientRect();
+    return { x: box.x, y: box.y, width: box.width, height: box.height };
+  }));
+  const yTickBoxes = await yTicks.evaluateAll((elements) => elements.map((element) => {
+    const box = element.getBoundingClientRect();
+    return { x: box.x, y: box.y, width: box.width, height: box.height };
+  }));
+  for (let index = 1; index < xTickBoxes.length; index += 1) {
+    expect(boxesOverlap(xTickBoxes[index - 1], xTickBoxes[index])).toBe(false);
+    expect(boxesOverlap(yTickBoxes[index - 1], yTickBoxes[index])).toBe(false);
+  }
+
+  const matrixBox = await figure.locator(".heatmaplayer image").first().boundingBox();
+  const colorbarBox = await figure.locator("g.colorbar .cbfill").first().boundingBox();
+  expect(matrixBox).not.toBeNull();
+  expect(colorbarBox).not.toBeNull();
+  expect(Math.abs(matrixBox!.width - matrixBox!.height)).toBeLessThanOrEqual(3);
+  expect(colorbarBox!.x).toBeGreaterThanOrEqual(matrixBox!.x + matrixBox!.width);
+  expect(colorbarBox!.x - (matrixBox!.x + matrixBox!.width)).toBeLessThanOrEqual(120);
+
+  const screenshotPath = testInfo.outputPath("similarity-heatmap-desktop.png");
+  await figure.screenshot({ path: screenshotPath });
+  await testInfo.attach("similarity-heatmap-desktop", {
+    path: screenshotPath,
+    contentType: "image/png",
+  });
   await expect(page.getByRole("combobox", {
     name: "Molecule",
     exact: true,

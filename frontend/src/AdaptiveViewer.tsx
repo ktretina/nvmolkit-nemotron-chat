@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createViewer, type GLViewer } from "3dmol";
 import Plot from "react-plotly.js";
-import type { Data, Layout } from "plotly.js";
+import type { Data, Layout, Margin } from "plotly.js";
 
 import type {
   ConformerStructure,
@@ -25,11 +25,18 @@ const ELEMENT_COLORS: Record<string, string> = {
   I: "#8b65c2",
 };
 
+const DEFAULT_PLOT_MARGIN: Partial<Margin> = { l: 72, r: 32, t: 58, b: 72 };
+
 function ScientificPlot({ graph }: { graph: PlotlyGraph }) {
   const titleId = useId();
   const descriptionId = useId();
+  const graphMargin = (graph.layout.margin ?? {}) as Partial<Margin>;
   return (
-    <figure className="plot-frame" aria-labelledby={titleId} aria-describedby={descriptionId}>
+    <figure
+      className={`plot-frame plot-frame--${graph.kind}`}
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
+    >
       <figcaption className="sr-only">
         <span id={titleId}>{graph.layout.title.text}</span>
         <span id={descriptionId}>
@@ -44,7 +51,7 @@ function ScientificPlot({ graph }: { graph: PlotlyGraph }) {
           paper_bgcolor: "transparent",
           plot_bgcolor: "transparent",
           font: { color: "#d7d9dc" },
-          margin: { l: 72, r: 32, t: 58, b: 72 },
+          margin: { ...DEFAULT_PLOT_MARGIN, ...graphMargin },
         }}
         config={{ responsive: true, displaylogo: false }}
         useResizeHandler
